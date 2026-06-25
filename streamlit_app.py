@@ -192,6 +192,34 @@ def format_docs(retrieved_docs):
     return "\n\n".join(doc.page_content for doc in retrieved_docs)
 
 
+def fetch_best_transcript(video_id: str):
+    ytt_api = YouTubeTranscriptApi()
+
+    try:
+        fetched = ytt_api.fetch(video_id, languages=["en", "hi"])
+        return fetched, "en/hi"
+    except Exception:
+        pass
+
+    transcript_list = ytt_api.list(video_id)
+
+    try:
+        transcript = transcript_list.find_transcript(["en", "hi"])
+    except Exception:
+        transcript = next(iter(transcript_list), None)
+
+    if transcript is None:
+        raise ValueError("No transcript was found for this video.")
+
+    if getattr(transcript, "language_code", None) != "en" and getattr(transcript, "is_translatable", False):
+        try:
+            transcript = transcript.translate("en")
+        except Exception:
+            pass
+
+    return transcript.fetch(), getattr(transcript, "language_code", "available")
+
+
 PROMPT = PromptTemplate(
     template="""
 You are a helpful assistant.
@@ -223,8 +251,7 @@ def process_video(url, chunk_size, chunk_overlap, k):
         return None, "Couldn't find a video ID in that URL — check the link and try again."
 
     try:
-        ytt_api = YouTubeTranscriptApi()
-        fetched = ytt_api.fetch(video_id)
+        fetched, transcript_language = fetch_best_transcript(video_id)
         transcript = "".join(item.text for item in fetched)
     except TranscriptsDisabled:
         return None, "This video has captions disabled, so there's no transcript to read."
@@ -245,6 +272,7 @@ def process_video(url, chunk_size, chunk_overlap, k):
         "video_id": video_id,
         "retriever": retriever,
         "chunk_count": len(chunks),
+        "transcript_language": transcript_language,
     }, None
 
 
