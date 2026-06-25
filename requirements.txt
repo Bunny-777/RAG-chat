@@ -2,7 +2,6 @@ youtube-transcript-api
 langchain-text-splitters
 langchain-groq
 faiss-cpu
-sentence-transformers
 langchain-core
 langchain-huggingface
 python-dotenv

@@ -2,7 +2,6 @@ from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
 from langchain_community.vectorstores import FAISS
-from sentence_transformers import SentenceTransformer
 from langchain_core.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
