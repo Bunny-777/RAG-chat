@@ -1,19 +1,9 @@
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_groq import ChatGroq
-from langchain_faiss import FAISS
-from langchain_core.prompts import PromptTemplate
-from dotenv import load_dotenv
-
-video_id = "Gfr50f6ZBvo" # only the ID, not full URL
-try:
-    transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
-
-    # Flatten it to plain text
-    transcript = " ".join(chunk["text"] for chunk in transcript_list)
-    print(transcript)
-
-except TranscriptsDisabled:
-    print("No captions available for this video.")
-
+youtube-transcript-api
+langchain-text-splitters
+langchain-groq
+faiss-cpu
+sentence-transformers
+langchain-core
+langchain-huggingface
+python-dotenv
+langchain-community
