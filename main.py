@@ -8,6 +8,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
+from urllib.parse import urlparse, parse_qs
 
 load_dotenv()
 parser = StrOutputParser()
@@ -17,9 +18,18 @@ def format_docs(retrieved_docs):
   return context_text
 
 
-video_url="https://www.youtube.com/watch?v=kXB55AGmDPI"
+def get_video_id(url):
+    parsed_url = urlparse(url)
+    # Normal YouTube URL
+    if parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
+        return parse_qs(parsed_url.query).get("v", [None])[0]
+    # Short URL
+    elif parsed_url.hostname == "youtu.be":
+        return parsed_url.path.lstrip("/")
+    return None
 
-video_id = "kXB55AGmDPI" # only the ID, not full URL
+url=input("Enter your youtube video url:-")
+video_id=get_video_id(url)
 try:
     ytt_api = YouTubeTranscriptApi()
     fetched_transcript = ytt_api.fetch(video_id)
