@@ -30,3 +30,34 @@ embeddings=HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6
 #storing in vector store database
 vector_store = FAISS.from_documents(chunks, embeddings)
 print("chal rha he ")
+
+#first step of RAG:- Retrieval
+
+retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+# print(retriever.invoke('which android is he talking about?'))  testing the retriever
+
+
+#second step of RAG:- Augmentation
+
+llm=ChatGroq(model="llama-3.3-70b-versatile")
+prompt = PromptTemplate(
+    template="""
+      You are a helpful assistant.
+      Answer ONLY from the provided transcript context.
+      If the context is insufficient, just say you don't know.
+
+      {context}
+      Question: {question}
+    """,
+    input_variables = ['context', 'question']
+)
+question          = "which android is he talking about?"
+retrieved_docs    = retriever.invoke(question)
+
+context_text = "\n\n".join(doc.page_content for doc in retrieved_docs)
+final_prompt = prompt.invoke({"context": context_text, "question": question})
+# print(final_prompt)
+
+# third step of RAG :- Generation
+answer = llm.invoke(final_prompt)
+print(answer.content)
