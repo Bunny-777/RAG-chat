@@ -14,6 +14,29 @@ from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
+
+def get_groq_api_key():
+    env_key = os.getenv("GROQ_API_KEY")
+    if env_key:
+        return env_key
+
+    try:
+        root_secret = st.secrets.get("GROQ_API_KEY")
+        if root_secret:
+            os.environ["GROQ_API_KEY"] = str(root_secret)
+            return str(root_secret)
+
+        groq_section = st.secrets.get("groq", {})
+        section_secret = groq_section.get("api_key") if hasattr(groq_section, "get") else None
+        if section_secret:
+            os.environ["GROQ_API_KEY"] = str(section_secret)
+            return str(section_secret)
+    except Exception:
+        return None
+
+    return None
+
+
 st.set_page_config(
     page_title="Reel Talk — chat with any YouTube video",
     page_icon="🎞️",
@@ -190,6 +213,7 @@ def load_embeddings():
 
 @st.cache_resource(show_spinner=False)
 def load_llm():
+    get_groq_api_key()
     return ChatGroq(model="llama-3.3-70b-versatile")
 
 
@@ -248,17 +272,20 @@ with st.sidebar:
 
     process_clicked = st.button("Process video", use_container_width=True, type="primary")
 
-    if not os.getenv("GROQ_API_KEY"):
+    groq_api_key = get_groq_api_key()
+
+    if not groq_api_key:
         st.markdown("---")
-        st.warning("No GROQ_API_KEY found in your environment.")
+        st.warning("No GROQ_API_KEY found in your environment or Streamlit secrets.")
         manual_key = st.text_input("Groq API key", type="password")
         if manual_key:
             os.environ["GROQ_API_KEY"] = manual_key
+            groq_api_key = manual_key
 
     if process_clicked:
         if not url:
             st.error("Paste a YouTube URL first.")
-        elif not os.getenv("GROQ_API_KEY"):
+        elif not groq_api_key:
             st.error("A Groq API key is required before processing.")
         else:
             with st.spinner("Reading the transcript and building the index..."):
