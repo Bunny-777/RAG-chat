@@ -4,6 +4,11 @@ from urllib.parse import urlparse, parse_qs
 import streamlit as st
 from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+try:
+    from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
+except ImportError:
+    GenericProxyConfig = None
+    WebshareProxyConfig = None
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
 from langchain_community.vectorstores import FAISS
@@ -188,12 +193,52 @@ def get_video_id(url: str):
     return None
 
 
+def get_secret_value(*path):
+    try:
+        value = st.secrets
+        for key in path:
+            value = value.get(key) if hasattr(value, "get") else None
+            if value is None:
+                return None
+        return value
+    except Exception:
+        return None
+
+
+def load_youtube_api():
+    webshare_username = get_secret_value("webshare", "proxy_username") or os.getenv("WEBSHARE_PROXY_USERNAME")
+    webshare_password = get_secret_value("webshare", "proxy_password") or os.getenv("WEBSHARE_PROXY_PASSWORD")
+    proxy_http_url = get_secret_value("proxy", "http_url") or os.getenv("PROXY_HTTP_URL")
+    proxy_https_url = get_secret_value("proxy", "https_url") or os.getenv("PROXY_HTTPS_URL")
+
+    if webshare_username and webshare_password and WebshareProxyConfig:
+        locations = get_secret_value("webshare", "filter_ip_locations")
+        if isinstance(locations, str):
+            locations = [item.strip() for item in locations.split(",") if item.strip()]
+
+        proxy_config = WebshareProxyConfig(
+            proxy_username=str(webshare_username),
+            proxy_password=str(webshare_password),
+            filter_ip_locations=locations or None,
+        )
+        return YouTubeTranscriptApi(proxy_config=proxy_config)
+
+    if (proxy_http_url or proxy_https_url) and GenericProxyConfig:
+        proxy_config = GenericProxyConfig(
+            http_url=str(proxy_http_url) if proxy_http_url else None,
+            https_url=str(proxy_https_url) if proxy_https_url else None,
+        )
+        return YouTubeTranscriptApi(proxy_config=proxy_config)
+
+    return YouTubeTranscriptApi()
+
+
 def format_docs(retrieved_docs):
     return "\n\n".join(doc.page_content for doc in retrieved_docs)
 
 
 def fetch_best_transcript(video_id: str):
-    ytt_api = YouTubeTranscriptApi()
+    ytt_api = load_youtube_api()
 
     try:
         fetched = ytt_api.fetch(video_id, languages=["en", "hi"])
@@ -218,6 +263,16 @@ def fetch_best_transcript(video_id: str):
             pass
 
     return transcript.fetch(), getattr(transcript, "language_code", "available")
+
+
+def format_transcript_error(error):
+    message = str(error)
+    if "IP" in message and "blocked" in message.lower():
+        return (
+            "YouTube is blocking transcript requests from Streamlit Cloud's server. "
+            "Add a rotating residential proxy in Streamlit secrets, or paste the transcript manually below."
+        )
+    return f"Couldn't fetch a transcript for this video: {error}"
 
 
 PROMPT = PromptTemplate(
@@ -245,18 +300,22 @@ def load_llm():
     return ChatGroq(model="llama-3.3-70b-versatile")
 
 
-def process_video(url, chunk_size, chunk_overlap, k):
+def process_video(url, chunk_size, chunk_overlap, k, manual_transcript=""):
     video_id = get_video_id(url)
     if not video_id:
         return None, "Couldn't find a video ID in that URL — check the link and try again."
 
-    try:
-        fetched, transcript_language = fetch_best_transcript(video_id)
-        transcript = "".join(item.text for item in fetched)
-    except TranscriptsDisabled:
-        return None, "This video has captions disabled, so there's no transcript to read."
-    except Exception as e:
-        return None, f"Couldn't fetch a transcript for this video: {e}"
+    if manual_transcript.strip():
+        transcript = manual_transcript.strip()
+        transcript_language = "pasted"
+    else:
+        try:
+            fetched, transcript_language = fetch_best_transcript(video_id)
+            transcript = " ".join(item.text for item in fetched)
+        except TranscriptsDisabled:
+            return None, "This video has captions disabled, so there's no transcript to read."
+        except Exception as e:
+            return None, format_transcript_error(e)
 
     if not transcript.strip():
         return None, "The transcript came back empty — try a different video."
@@ -298,6 +357,13 @@ with st.sidebar:
         chunk_overlap = st.slider("Chunk overlap", 0, 500, 200, 50)
         k = st.slider("Chunks retrieved per question", 1, 8, 4)
 
+    with st.expander("Manual transcript fallback"):
+        manual_transcript = st.text_area(
+            "Paste transcript text",
+            height=180,
+            placeholder="Paste YouTube transcript text here if Streamlit Cloud is blocked by YouTube...",
+        )
+
     process_clicked = st.button("Process video", use_container_width=True, type="primary")
 
     groq_api_key = get_groq_api_key()
@@ -317,7 +383,7 @@ with st.sidebar:
             st.error("A Groq API key is required before processing.")
         else:
             with st.spinner("Reading the transcript and building the index..."):
-                data, err = process_video(url, chunk_size, chunk_overlap, k)
+                data, err = process_video(url, chunk_size, chunk_overlap, k, manual_transcript)
             if err:
                 st.error(err)
             else:
@@ -360,6 +426,7 @@ else:
             f"""
             <div class="meta-card">
             <b>Video ID</b> {data['video_id']}<br/>
+            <b>Transcript</b> {data.get('transcript_language', 'available')}<br/>
             <b>Chunks indexed</b> {data['chunk_count']}<br/>
             <b>Retrieving</b> top {k} matches per question
             </div>
