@@ -1,94 +1,66 @@
-#CLI version 
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_groq import ChatGroq
-from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
-from langchain_huggingface import HuggingFaceEmbeddings
-from dotenv import load_dotenv
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
-from langchain_core.output_parsers import StrOutputParser
-from urllib.parse import urlparse, parse_qs
+"""
+CLI Entry Point for YouTube RAG Chat.
+Refactored to use the modular backend service layer.
+"""
+import sys
+from backend.app.services.youtube_rag_service import youtube_rag_service
+from backend.app.core.exceptions import ResearchAppException
+from backend.app.core.logging import get_logger
 
-load_dotenv()
-parser = StrOutputParser()
-
-def format_docs(retrieved_docs):
-  context_text = "\n\n".join(doc.page_content for doc in retrieved_docs)
-  return context_text
+logger = get_logger("cli")
 
 
-def get_video_id(url):
-    parsed_url = urlparse(url)
-    # Normal YouTube URL
-    if parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
-        return parse_qs(parsed_url.query).get("v", [None])[0]
-    # Short URL
-    elif parsed_url.hostname == "youtu.be":
-        return parsed_url.path.lstrip("/")
-    return None
+def main():
+    print("=" * 60)
+    print("  YouTube RAG Chatbot (Modular CLI)")
+    print("=" * 60)
 
-url=input("Enter your youtube video url:-")
-video_id=get_video_id(url)
-try:
-    ytt_api = YouTubeTranscriptApi()
-    fetched_transcript = ytt_api.fetch(video_id)
-    transcript=""
-    for i in fetched_transcript:
-        transcript+=i.text
-except TranscriptsDisabled:
-    print("No captions available for this video.")
+    url = input("\nEnter your YouTube video URL: ").strip()
+    if not url:
+        print("Error: URL cannot be empty.")
+        return
 
-#splitting the text using text splitters 
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-chunks = splitter.create_documents([transcript])
+    print("\n[1/3] Extracting transcript and building vector index...")
+    try:
+        result = youtube_rag_service.ingest_and_index_video(url=url)
+        print(f"✓ Successfully indexed video ID: {result.video_id}")
+        print(f"✓ Language: {result.language}")
+        print(f"✓ Total chunks indexed: {result.chunk_count}")
+    except ResearchAppException as exc:
+        print(f"Error during ingestion: {exc.message}")
+        return
+    except Exception as exc:
+        print(f"Unexpected error: {exc}")
+        return
 
-#generating embeddings
-embeddings=HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    print("\n[2/3] Initializing QA chain with Groq LLaMA 3.3 70B...")
+    try:
+        chain = youtube_rag_service.create_qa_chain(retriever=result.retriever)
+        print("✓ QA Chain ready.")
+    except Exception as exc:
+        print(f"Error configuring QA chain: {exc}")
+        return
 
-#storing in vector store database
-vector_store = FAISS.from_documents(chunks, embeddings)
-# print("chal rha he ") testing 
+    print("\n[3/3] Ask questions about the video. Type 'Exit' or 'quit' to stop.\n")
+    while True:
+        try:
+            query = input("Enter your query: ").strip()
+            if not query:
+                continue
+            if query.lower() in ("exit", "quit", "q"):
+                print("Exiting. Goodbye!")
+                break
 
-#first step of RAG:- Retrieval
+            print("\nGenerating answer...")
+            answer = chain.invoke(query)
+            print(f"\nAnswer:\n{answer}\n")
+            print("-" * 60)
+        except KeyboardInterrupt:
+            print("\nExiting. Goodbye!")
+            break
+        except Exception as exc:
+            print(f"Error answering query: {exc}")
 
-retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
-# print(retriever.invoke('which android is he talking about?'))  testing the retriever
 
-
-#second step of RAG:- Augmentation
-
-llm=ChatGroq(model="llama-3.3-70b-versatile")
-prompt = PromptTemplate(
-    template="""
-      You are a helpful assistant.
-      Answer ONLY from the provided transcript context.
-      If the context is insufficient, just say you don't know.
-
-      {context}
-      Question: {question}
-    """,
-    input_variables = ['context', 'question']
-)
-question          = "which android is he talking about?"
-retrieved_docs    = retriever.invoke(question)
-
-context_text = "\n\n".join(doc.page_content for doc in retrieved_docs)
-final_prompt = prompt.invoke({"context": context_text, "question": question})
-# print(final_prompt)
-
-# third step of RAG :- Generation
-answer = llm.invoke(final_prompt)
-# print(answer.content)
-
-#Buildig chain to automate the process
-parallel_chain = RunnableParallel({
-    'context': retriever | RunnableLambda(format_docs),
-    'question': RunnablePassthrough()
-})
-main_chain = parallel_chain | prompt | llm | parser
-while True:
-    query=input("Enter your query :")
-    if(query=='Exit'):
-        break
-    print(main_chain.invoke(query))
+if __name__ == "__main__":
+    main()
