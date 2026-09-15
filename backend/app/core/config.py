@@ -12,7 +12,7 @@ class Settings:
 
     # LLM Settings
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY")
-    LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME", "llama-3.3-70b-versatile")
+    LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME", "openai/gpt-oss-120b")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 
     # Embeddings Settings

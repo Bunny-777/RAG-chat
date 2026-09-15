@@ -34,6 +34,15 @@ Question: {question}
     input_variables=["context", "question"],
 )
 
+FALLBACK_MODELS = [
+    settings.LLM_MODEL_NAME,
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.8-27b",
+    "groq/compound-mini",
+    "groq/compound",
+]
+
 
 @dataclass
 class YouTubeIndexResult:
@@ -64,7 +73,7 @@ class YouTubeRAGService:
         model_name: Optional[str] = None,
         temperature: Optional[float] = None,
     ) -> BaseChatModel:
-        """Returns a configured ChatGroq instance."""
+        """Returns a configured ChatGroq instance with model fallback support."""
         key = api_key or settings.GROQ_API_KEY
         if not key:
             raise ModelProviderError(
@@ -150,10 +159,28 @@ class YouTubeRAGService:
         question: str,
         llm: Optional[BaseChatModel] = None,
     ) -> str:
-        """Runs question answering over the indexed video transcript."""
-        chain = self.create_qa_chain(retriever=retriever, llm=llm)
-        logger.info(f"Executing QA query: '{question}'")
-        return chain.invoke(question)
+        """Runs question answering over the indexed video transcript with model fallback."""
+        if llm:
+            chain = self.create_qa_chain(retriever=retriever, llm=llm)
+            return chain.invoke(question)
+
+        # Try primary and fallback models
+        last_err = None
+        for model_candidate in FALLBACK_MODELS:
+            try:
+                candidate_llm = self.get_llm(model_name=model_candidate)
+                chain = self.create_qa_chain(retriever=retriever, llm=candidate_llm)
+                logger.info(f"Executing QA query with model: {model_candidate}")
+                return chain.invoke(question)
+            except Exception as exc:
+                err_str = str(exc)
+                if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str:
+                    logger.warning(f"Model '{model_candidate}' not available on Groq, trying next candidate...")
+                    last_err = exc
+                    continue
+                raise exc
+
+        raise ModelProviderError(f"All attempted Groq models failed: {last_err}")
 
 
 # Singleton instance for simple importing

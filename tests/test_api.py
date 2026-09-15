@@ -131,6 +131,33 @@ def test_research_endpoint_with_uploaded_source(sample_transcript_text):
         assert del_res.status_code == 200
 
 
+def test_research_calculator_tool():
+    res = client.post(
+        "/research",
+        json={"query": "what is 2+2?", "options": {"mode": "quick"}},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "2+2 = 4" in data["executive_summary"]
+    assert "4" in str(data["key_findings"])
+
+
+def test_research_direct_query_without_sources():
+    fake_llm = FakeListChatModel(
+        responses=["General research response.\n\nDetailed reasoning.\n\nConclusion."]
+    )
+
+    with patch("backend.app.services.youtube_rag_service.youtube_rag_service.get_llm", return_value=fake_llm):
+        res = client.post(
+            "/research",
+            json={"query": "Explain quantum computing fundamentals", "options": {"mode": "quick"}},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert "General research response" in data["executive_summary"]
+        assert len(data["sources"]) == 0
+
+
 def test_research_streaming_endpoint(sample_transcript_text):
     fake_embeddings = FakeEmbeddings(size=384)
     fake_llm = FakeListChatModel(responses=["Streamed answer regarding RAG."])
