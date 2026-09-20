@@ -41,5 +41,9 @@ class Settings:
         ]
     )
 
+    # Search APIs
+    SERPER_API_KEY: Optional[str] = os.getenv("SERPER_API_KEY")
+    TAVILY_API_KEY: Optional[str] = os.getenv("TAVILY_API_KEY")
+
 
 settings = Settings()
