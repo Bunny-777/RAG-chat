@@ -33,6 +33,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { researchApi, streamResearch } from "./api";
 import type {
   ChatSessionSummary,
@@ -81,16 +83,94 @@ function modeLabel(mode: string) {
   return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
-function plainContent(value?: string) {
-  if (!value) return null;
-  return value.split("\n").map((line, index) => {
-    const text = line.replace(/^#{1,6}\s*/, "").replace(/\*\*/g, "");
-    if (!text.trim()) return <div className="h-3" key={index} />;
-    if (/^[-*]\s/.test(text)) {
-      return <li className="ml-5 list-disc pl-1" key={index}>{text.replace(/^[-*]\s/, "")}</li>;
-    }
-    return <p key={index}>{text}</p>;
-  });
+function CodeBlock({ className, children }: { className?: string; children: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const text = String(children).replace(/\n$/, "");
+  const match = /language-(\w+)/.exec(className || "");
+  const lang = match ? match[1] : "";
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative my-3 overflow-hidden rounded-lg border border-border/80 bg-surface/90 shadow-sm">
+      <div className="flex items-center justify-between border-b border-border/70 bg-muted/40 px-3.5 py-1.5 text-[11px] font-mono text-muted-foreground">
+        <span>{lang || "code"}</span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-background/80 hover:text-foreground"
+          aria-label="Copy code"
+        >
+          {copied ? <Check className="size-3 text-signal" /> : <Copy className="size-3" />}
+          <span className="text-[10px]">{copied ? "Copied" : "Copy"}</span>
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3.5 text-xs font-mono leading-relaxed text-foreground">
+        <code className={className}>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
+function MarkdownContent({ content }: { content?: string | null }) {
+  if (!content?.trim()) return null;
+  return (
+    <div className="claude-prose text-sm leading-relaxed text-foreground/90 space-y-2.5 font-sans">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <h1 className="text-lg font-semibold tracking-tight text-foreground mt-4 mb-2">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-base font-semibold tracking-tight text-foreground mt-3.5 mb-2">{children}</h2>,
+          h3: ({ children }) => <h3 className="text-sm font-semibold text-foreground mt-3 mb-1.5">{children}</h3>,
+          h4: ({ children }) => <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mt-2 mb-1">{children}</h4>,
+          p: ({ children }) => <p className="leading-relaxed text-foreground/90 my-1.5">{children}</p>,
+          ul: ({ children }) => <ul className="list-disc pl-5 space-y-1 my-1.5 marker:text-primary/70 text-foreground/90">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1 my-1.5 marker:text-primary/70 text-foreground/90">{children}</ol>,
+          li: ({ children }) => <li className="pl-0.5 leading-relaxed">{children}</li>,
+          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+          em: ({ children }) => <em className="italic text-foreground/80">{children}</em>,
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-primary/50 pl-3.5 py-1 text-muted-foreground my-2.5 bg-primary/5 rounded-r-md">
+              {children}
+            </blockquote>
+          ),
+          code: ({ className, children, ...props }) => {
+            const isInline = !className && typeof children === "string" && !children.includes("\n");
+            if (isInline) {
+              return (
+                <code className="rounded bg-muted/80 px-1.5 py-0.5 font-mono text-[12px] text-primary border border-border/40 font-medium" {...props}>
+                  {children}
+                </code>
+              );
+            }
+            return <CodeBlock className={className}>{children}</CodeBlock>;
+          },
+          table: ({ children }) => (
+            <div className="my-3.5 w-full overflow-x-auto rounded-lg border border-border shadow-sm">
+              <table className="w-full text-left text-xs border-collapse">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-muted/40 border-b border-border text-foreground font-semibold">{children}</thead>,
+          tbody: ({ children }) => <tbody className="divide-y divide-border/60">{children}</tbody>,
+          tr: ({ children }) => <tr className="transition-colors hover:bg-muted/20">{children}</tr>,
+          th: ({ children }) => <th className="px-3 py-2 font-semibold text-foreground">{children}</th>,
+          td: ({ children }) => <td className="px-3 py-2 text-foreground/90">{children}</td>,
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">
+              {children}
+              <ExternalLink className="inline size-3 opacity-70 ml-0.5" />
+            </a>
+          ),
+          hr: () => <hr className="my-4 border-border/60" />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function Logo() {
@@ -311,25 +391,241 @@ function sourceKind(source: CitedSource) {
 }
 
 function reportMarkdown(report: ResearchReport) {
-  return `# ${report.title}\n\n**Query:** ${report.query}\n\n## Executive Summary\n${report.executive_summary}\n\n## Key Findings\n${report.key_findings.map((item) => `- **${item.title || "Finding"}:** ${item.finding || item.detail || ""}`).join("\n")}\n\n## Detailed Analysis\n${report.analysis.map((item) => `### ${item.heading || item.title || "Analysis"}\n${item.content || ""}`).join("\n\n")}\n\n## Conclusion & Recommendations\n${report.conclusion}\n\n## Sources\n${report.sources.map((source) => `- [${sourceTitle(source)}](${source.url || "#"})`).join("\n")}`;
+  const parts: string[] = [];
+  if (report.title) parts.push(`# ${report.title}`);
+  if (report.query) parts.push(`**Query:** ${report.query}`);
+  if (report.executive_summary?.trim()) {
+    parts.push(report.executive_summary.trim());
+  }
+  const findings = (report.key_findings || []).filter(
+    (item) => item.title?.trim() || item.finding?.trim() || item.detail?.trim()
+  );
+  if (findings.length > 0) {
+    parts.push(
+      `## Key Findings\n` +
+        findings
+          .map((item) => `- **${item.title || "Finding"}:** ${item.finding || item.detail || ""}`)
+          .join("\n")
+    );
+  }
+  const analysis = (report.analysis || []).filter(
+    (item) => item.content?.trim() || item.body?.trim()
+  );
+  if (analysis.length > 0) {
+    parts.push(
+      `## Detailed Analysis\n` +
+        analysis
+          .map(
+            (item) =>
+              `### ${item.heading || item.title || "Analysis"}\n${item.content || item.body || ""}`
+          )
+          .join("\n\n")
+    );
+  }
+  if (report.conclusion?.trim()) {
+    parts.push(`## Conclusion & Recommendations\n${report.conclusion.trim()}`);
+  }
+  if (report.sources?.length) {
+    parts.push(
+      `## Sources\n` +
+        report.sources
+          .map((source) => `- [${sourceTitle(source)}](${source.url || "#"})`)
+          .join("\n")
+    );
+  }
+  return parts.join("\n\n");
 }
 
 function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRegenerate: () => void }) {
-  const copy = async () => { await navigator.clipboard.writeText(reportMarkdown(report)); toast.success("Full report copied as Markdown"); };
-  const exportReport = () => { const blob = new Blob([reportMarkdown(report)], { type: "text/markdown" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${report.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "research-report"}.md`; anchor.click(); URL.revokeObjectURL(url); toast.success("Markdown report exported"); };
-  return <article className="overflow-hidden rounded-lg border border-border bg-card shadow-panel">
-    <div className="border-b border-border bg-surface px-5 py-5 sm:px-7"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div className="min-w-0"><div className="mb-3 flex flex-wrap items-center gap-2"><Badge className="bg-primary/15 text-primary hover:bg-primary/15">{modeLabel(report.mode)} research</Badge><span className="flex items-center gap-1 text-xs text-muted-foreground"><Clock3 className="size-3" />{report.latency_ms.toLocaleString()} ms</span>{report.session_id && <span className="font-mono text-[11px] text-muted-foreground">{report.session_id.slice(0, 12)}</span>}</div><h2 className="font-display text-xl font-semibold leading-tight sm:text-2xl">{report.title}</h2><p className="mt-2 text-sm text-muted-foreground">{report.query}</p></div><div className="flex shrink-0 items-center gap-1"><TooltipButton label="Copy full Markdown" icon={<Copy />} onClick={() => void copy()} /><TooltipButton label="Export Markdown" icon={<Download />} onClick={exportReport} /><TooltipButton label="Regenerate" icon={<RefreshCw />} onClick={onRegenerate} /></div></div></div>
-    <div className="space-y-8 px-5 py-7 sm:px-7 sm:py-8">
-      <section><SectionLabel number="01" title="Executive summary" /><div className="report-copy mt-4 border-l-2 border-primary pl-5">{plainContent(report.executive_summary)}</div></section>
-      {report.key_findings.length > 0 && <section><SectionLabel number="02" title="Key findings & evidence" /><div className="mt-4 grid gap-3 sm:grid-cols-2">{report.key_findings.map((finding, index) => <div className="rounded-md border border-border bg-surface p-4" key={index}><div className="mb-3 flex size-6 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">{index + 1}</div><h3 className="text-sm font-semibold">{finding.title || "Key finding"}</h3><div className="report-copy mt-2 text-sm">{plainContent(finding.finding || finding.detail)}</div></div>)}</div></section>}
-      {report.analysis.length > 0 && <section><SectionLabel number="03" title="Detailed analysis" /><div className="mt-4 divide-y divide-border rounded-md border border-border">{report.analysis.map((item, index) => <div className="p-4 sm:p-5" key={index}><h3 className="mb-3 text-sm font-semibold">{item.heading || item.title || `Analysis ${index + 1}`}</h3><div className="report-copy">{plainContent(item.content)}</div></div>)}</div></section>}
-      <section><SectionLabel number="04" title="Conclusion & recommendations" /><div className="report-copy mt-4 rounded-md border border-signal/20 bg-signal/5 p-5">{plainContent(report.conclusion)}</div></section>
-    </div>
-    {report.sources.length > 0 && <div className="border-t border-border bg-surface px-5 py-5 sm:px-7"><div className="mb-3 flex items-center justify-between"><h3 className="text-xs font-semibold uppercase text-muted-foreground">Cited sources</h3><span className="text-xs text-muted-foreground">{report.sources.length} references</span></div><div className="flex gap-3 overflow-x-auto pb-1">{report.sources.map((source, index) => <a key={source.url || index} href={source.url} target="_blank" rel="noreferrer" className="group w-60 shrink-0 rounded-md border border-border bg-background p-3 hover:border-primary/40"><div className="flex items-start gap-3"><div className="grid size-8 shrink-0 place-items-center rounded-md bg-secondary"><Globe2 className="size-4 text-cyan" /></div><div className="min-w-0 flex-1"><p className="line-clamp-2 text-xs font-medium leading-relaxed group-hover:text-primary">{sourceTitle(source)}</p><div className="mt-2 flex items-center justify-between"><span className="text-[10px] uppercase text-muted-foreground">{sourceKind(source)}</span><ExternalLink className="size-3 text-muted-foreground" /></div></div></div></a>)}</div></div>}
-  </article>;
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(reportMarkdown(report));
+    setCopied(true);
+    toast.success("Copied full report as Markdown");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const exportReport = () => {
+    const blob = new Blob([reportMarkdown(report)], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${report.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "research-report"}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast.success("Markdown report exported");
+  };
+
+  const hasExecutiveSummary = Boolean(report.executive_summary?.trim());
+  const validFindings = (report.key_findings || []).filter(
+    (f) => Boolean(f.finding?.trim() || f.detail?.trim() || f.title?.trim())
+  );
+  const validAnalysis = (report.analysis || []).filter(
+    (a) => Boolean(a.content?.trim() || a.body?.trim())
+  );
+  const hasConclusion = Boolean(report.conclusion?.trim());
+  const hasSources = Boolean(report.sources && report.sources.length > 0);
+
+  // If there are no specialized sections, render cleanly and directly like Claude
+  const isDirectAnswerOnly = !validFindings.length && !validAnalysis.length && !hasConclusion;
+
+  return (
+    <article className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-panel">
+      {/* Top Header */}
+      <div className="border-b border-border/70 bg-surface/70 px-5 py-4 sm:px-6">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="bg-primary/15 text-primary text-[11px] hover:bg-primary/15">
+                {modeLabel(report.mode)} research
+              </Badge>
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Clock3 className="size-3" />
+                {report.latency_ms.toLocaleString()} ms
+              </span>
+              {report.session_id && (
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {report.session_id.slice(0, 8)}
+                </span>
+              )}
+            </div>
+            <h2 className="mt-2 font-display text-lg font-semibold leading-tight text-foreground sm:text-xl">
+              {report.title}
+            </h2>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 self-end sm:self-auto">
+            <TooltipButton
+              label={copied ? "Copied" : "Copy Markdown"}
+              icon={copied ? <Check className="size-3.5 text-signal" /> : <Copy className="size-3.5" />}
+              onClick={() => void copy()}
+            />
+            <TooltipButton label="Export Markdown" icon={<Download className="size-3.5" />} onClick={exportReport} />
+            <TooltipButton label="Regenerate" icon={<RefreshCw className="size-3.5" />} onClick={onRegenerate} />
+          </div>
+        </div>
+      </div>
+
+      {/* Body Content */}
+      <div className="px-5 py-6 sm:px-7 sm:py-7">
+        {isDirectAnswerOnly ? (
+          hasExecutiveSummary && <MarkdownContent content={report.executive_summary} />
+        ) : (
+          <div className="space-y-6">
+            {hasExecutiveSummary && (
+              <section>
+                <div className="mb-2.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span>Summary</span>
+                </div>
+                <div className="rounded-lg border border-border/60 bg-surface/30 p-4">
+                  <MarkdownContent content={report.executive_summary} />
+                </div>
+              </section>
+            )}
+
+            {validFindings.length > 0 && (
+              <section>
+                <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <span>Key Findings & Evidence</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {validFindings.map((finding, index) => (
+                    <div
+                      className="rounded-lg border border-border/70 bg-surface/50 p-4 transition-colors hover:border-primary/30"
+                      key={index}
+                    >
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="flex size-5 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
+                          {index + 1}
+                        </span>
+                        {finding.title && (
+                          <h3 className="text-xs font-semibold text-foreground">
+                            {finding.title}
+                          </h3>
+                        )}
+                      </div>
+                      <div className="text-xs text-foreground/90">
+                        <MarkdownContent content={finding.finding || finding.detail || ""} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {validAnalysis.length > 0 && (
+              <section>
+                <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <span>Detailed Analysis</span>
+                </div>
+                <div className="divide-y divide-border/60 rounded-lg border border-border/70 bg-surface/30">
+                  {validAnalysis.map((item, index) => (
+                    <div className="p-4 sm:p-5" key={index}>
+                      {(item.heading || item.title) && (
+                        <h3 className="mb-2.5 text-sm font-semibold text-foreground">
+                          {item.heading || item.title}
+                        </h3>
+                      )}
+                      <MarkdownContent content={item.content || item.body || ""} />
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {hasConclusion && (
+              <section>
+                <div className="mb-2.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <span>Conclusion & Recommendations</span>
+                </div>
+                <div className="rounded-lg border border-signal/30 bg-signal/5 p-4 sm:p-5">
+                  <MarkdownContent content={report.conclusion} />
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Cited Sources Shelf - Renders ONLY if sources exist */}
+      {hasSources && (
+        <div className="border-t border-border/70 bg-surface/40 px-5 py-4 sm:px-6">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Cited sources ({report.sources.length})
+            </h3>
+          </div>
+          <div className="flex gap-2.5 overflow-x-auto pb-1">
+            {report.sources.map((source, index) => (
+              <a
+                key={source.url || index}
+                href={source.url || "#"}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex w-56 shrink-0 items-center gap-2.5 rounded-lg border border-border/70 bg-background/80 p-2.5 transition-colors hover:border-primary/40 hover:bg-accent/40"
+              >
+                <div className="grid size-7 shrink-0 place-items-center rounded-md bg-secondary text-cyan">
+                  <Globe2 className="size-3.5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium text-foreground group-hover:text-primary">
+                    {sourceTitle(source)}
+                  </p>
+                  <p className="text-[10px] uppercase text-muted-foreground">
+                    {sourceKind(source)}
+                  </p>
+                </div>
+                <ExternalLink className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </article>
+  );
 }
 
-function SectionLabel({ number, title }: { number: string; title: string }) { return <div className="flex items-center gap-3"><span className="font-mono text-[10px] text-primary">{number}</span><h3 className="text-xs font-semibold uppercase text-muted-foreground">{title}</h3><span className="h-px flex-1 bg-border" /></div>; }
 function TooltipButton({ label, icon, onClick }: { label: string; icon: React.ReactNode; onClick: () => void }) { return <Tooltip><TooltipTrigger asChild><Button variant="outline" size="icon" onClick={onClick} aria-label={label}>{icon}</Button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>; }
 
 function Conversation({ turns, onRegenerate, onExample }: { turns: TimelineTurn[]; onRegenerate: (turn: TimelineTurn) => void; onExample: (text: string) => void }) {
