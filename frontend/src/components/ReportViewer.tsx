@@ -11,6 +11,9 @@ import {
   Quote,
   CheckCircle,
   FileText,
+  Globe,
+  Zap,
+  Brain,
 } from "lucide-react";
 import type { ResearchReport } from "../types";
 import { formatLatency, reportToMarkdown, downloadMarkdown } from "../lib/utils";
@@ -57,8 +60,16 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ report }) => {
       {/* 1. Header & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6">
         <div>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-semibold">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className={`text-[10px] uppercase font-mono px-2.5 py-0.5 rounded-full border font-semibold flex items-center gap-1 ${
+              report.mode === "quick"
+                ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                : report.mode === "deep"
+                ? "bg-pink-500/10 text-pink-400 border-pink-500/20"
+                : "bg-purple-500/10 text-purple-400 border-purple-500/20"
+            }`}>
+              {report.mode === "quick" && <Zap className="w-3 h-3 text-amber-400" />}
+              {report.mode === "deep" && <Brain className="w-3 h-3 text-pink-400" />}
               Mode: {report.mode}
             </span>
             <span className="text-[10px] font-mono text-slate-400 flex items-center gap-1">
@@ -199,6 +210,9 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ report }) => {
             {report.sources.map((src, idx) => {
               const title = (src.title as string) || (src.source_id as string) || `Source ${idx + 1}`;
               const url = (src.url as string) || "";
+              const srcId = ((src.source_id as string) || "").toLowerCase();
+              const isWeb = srcId.startsWith("web") || (src.source_type as string) === "web";
+              const isDoc = (src.source_type as string) === "document" || title.endsWith(".pdf") || title.endsWith(".docx") || title.endsWith(".txt") || title.endsWith(".md");
 
               return (
                 <a
@@ -208,8 +222,14 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ report }) => {
                   rel="noreferrer"
                   className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-xs text-slate-200 transition-all group"
                 >
-                  <Video className="w-3.5 h-3.5 text-red-500" />
-                  <span className="font-medium group-hover:text-purple-300 transition-colors">
+                  {isWeb ? (
+                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : isDoc ? (
+                    <FileText className="w-3.5 h-3.5 text-purple-400" />
+                  ) : (
+                    <Video className="w-3.5 h-3.5 text-red-500" />
+                  )}
+                  <span className="font-medium group-hover:text-purple-300 transition-colors truncate max-w-xs">
                     {title}
                   </span>
                   {url && <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-slate-300" />}

@@ -230,6 +230,7 @@ export function App() {
             isResearching={isResearching}
             selectedSourcesCount={selectedSourceIds.length}
             researchMode={researchMode}
+            onChangeMode={setResearchMode}
           />
 
           {/* Live Progress Timeline */}

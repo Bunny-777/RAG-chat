@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2, Search, Database, FileText, CheckCircle2, Sparkles, Terminal } from "lucide-react";
+import { Loader2, Search, Database, FileText, CheckCircle2, Sparkles, Terminal, Brain } from "lucide-react";
 import type { SSEEvent } from "../types";
 
 interface LiveProgressFeedProps {
@@ -34,17 +34,21 @@ export const LiveProgressFeed: React.FC<LiveProgressFeedProps> = ({
       <div className="flex flex-col gap-3">
         {events.map((evt, idx) => {
           const isLatest = idx === events.length - 1 && isResearching;
+          const isThinking = evt.type === "thinking";
 
           return (
             <div
               key={idx}
               className={`flex items-start gap-3 p-2.5 rounded-xl border transition-all text-xs ${
-                isLatest
+                isThinking
+                  ? "bg-pink-950/30 border-pink-500/30 shadow-sm"
+                  : isLatest
                   ? "bg-purple-950/40 border-purple-500/40 shadow-sm animate-pulse-glow"
                   : "bg-slate-900/40 border-slate-800/60"
               }`}
             >
               <div className="mt-0.5">
+                {evt.type === "thinking" && <Brain className="w-4 h-4 text-pink-400 animate-pulse" />}
                 {evt.type === "status" && <Search className="w-4 h-4 text-sky-400" />}
                 {evt.type === "tool_call" && <Database className="w-4 h-4 text-indigo-400" />}
                 {evt.type === "source_found" && <FileText className="w-4 h-4 text-amber-400" />}
@@ -55,7 +59,9 @@ export const LiveProgressFeed: React.FC<LiveProgressFeedProps> = ({
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] uppercase font-bold text-slate-400">
+                  <span className={`font-mono text-[10px] uppercase font-bold ${
+                    isThinking ? "text-pink-400" : "text-slate-400"
+                  }`}>
                     [{evt.type}]
                   </span>
                   {evt.tool && (
@@ -70,8 +76,8 @@ export const LiveProgressFeed: React.FC<LiveProgressFeedProps> = ({
                   )}
                 </div>
 
-                <div className="text-slate-200 mt-1 font-sans">
-                  {evt.message || (evt.type === "report" ? "Structured report generated." : "Event emitted.")}
+                <div className={`mt-1 font-sans ${isThinking ? "text-pink-100 font-medium italic" : "text-slate-200"}`}>
+                  {evt.thought || evt.message || (evt.type === "report" ? "Structured report generated." : "Event emitted.")}
                 </div>
               </div>
             </div>
