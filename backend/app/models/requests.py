@@ -29,6 +29,10 @@ class UploadYouTubeRequest(BaseModel):
 class ResearchRequest(BaseModel):
     """Payload for initiating a research query."""
     query: str = Field(..., description="The research question or prompt.")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Optional chat session ID for conversational memory across turns.",
+    )
     source_ids: Optional[List[str]] = Field(
         default=None,
         description="List of specific source IDs to research against.",

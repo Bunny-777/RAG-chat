@@ -31,6 +31,7 @@ class UploadResponse(BaseModel):
 class ResearchResponse(BaseModel):
     """Structured research report response."""
     research_id: str
+    session_id: Optional[str] = None
     query: str
     title: str
     executive_summary: str
@@ -40,6 +41,15 @@ class ResearchResponse(BaseModel):
     sources: List[SourceInfo] = Field(default_factory=list)
     mode: str = "standard"
     latency_ms: Optional[float] = None
+
+
+class ChatSessionSummaryResponse(BaseModel):
+    """Summary of a chat session for list endpoints."""
+    session_id: str
+    title: str
+    created_at: float
+    updated_at: float
+    turn_count: int
 
 
 class ErrorResponse(BaseModel):

@@ -15,16 +15,17 @@ from backend.app.models.requests import ResearchRequest
 from backend.app.models.responses import ResearchResponse, SourceInfo
 from backend.app.services.youtube_rag_service import youtube_rag_service, YouTubeIndexResult, FALLBACK_MODELS
 from backend.app.services.source_store import source_store, AnyIndexResult
+from backend.app.services.session_store import session_store
 from backend.app.tools.calculator import safe_calculate, extract_math_expression
 from backend.app.tools.web_search import web_search
 
 logger = get_logger(__name__)
 
 QUICK_PROMPT = PromptTemplate(
-    template="""You are an ultra-fast, concise AI Research Assistant.
-Answer the user's research question directly, rapidly, and concisely.
-Keep your response focused and to the point (under 3-4 concise paragraphs or bullet points).
-Prioritize direct answers and key takeaways without unnecessary filler.
+    template="""You are an ultra-fast, direct AI Assistant.
+Answer the user's question directly, clearly, and concisely in 1 to 2 brief paragraphs or 3-4 succinct bullet points maximum.
+Do NOT output section headers like 'Executive Summary', 'Key Findings', or 'Conclusion'.
+Deliver ONLY the bottom line and core answer immediately.
 
 {context_section}
 
@@ -97,11 +98,23 @@ Answer:""",
 )
 
 
-def parse_report_sections(raw_answer: str, default_conclusion: str) -> Tuple[str, List[str], List[str], str]:
+def parse_report_sections(
+    raw_answer: str,
+    default_conclusion: str,
+    mode: str = "standard",
+) -> Tuple[str, List[str], List[str], str]:
     """
     Parses LLM output into executive summary, key findings, detailed analysis points, and conclusion.
-    Handles both markdown header structures and plain paragraph text.
+    Handles level-wise outputs:
+    - quick: pure direct answer in executive_summary, no bloated analysis/findings.
+    - standard: balanced brief with key findings and analysis.
+    - deep: exhaustive dossier with comparative perspectives and trade-offs.
     """
+    # Level 1: Quick Mode - Fast Flash Output
+    if mode == "quick":
+        clean_text = raw_answer.strip()
+        return clean_text, [], [], ""
+
     header_pattern = re.compile(r"^#{1,3}\s+(.+)$", re.MULTILINE)
     matches = list(header_pattern.finditer(raw_answer))
 
@@ -205,8 +218,9 @@ class ResearchService:
     async def execute_research(self, request: ResearchRequest) -> ResearchResponse:
         start_time = time.perf_counter()
         research_id = f"res_{uuid.uuid4().hex[:12]}"
+        session_id = request.session_id or f"sess_{uuid.uuid4().hex[:10]}"
         mode = request.options.mode if request.options and request.options.mode else "standard"
-        logger.info(f"Starting research {research_id} [Mode: {mode}] for query: '{request.query}'")
+        logger.info(f"Starting research {research_id} [Session: {session_id}] [Mode: {mode}] for query: '{request.query}'")
 
         sources_used: List[SourceInfo] = []
         target_indices: List[AnyIndexResult] = []
@@ -233,6 +247,7 @@ class ResearchService:
                 elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
                 response = ResearchResponse(
                     research_id=research_id,
+                    session_id=session_id,
                     query=request.query,
                     title=f"Calculation: {math_expr} = {res_val}",
                     executive_summary=executive_summary,
@@ -244,6 +259,7 @@ class ResearchService:
                     latency_ms=elapsed_ms,
                 )
                 source_store.save_research(response)
+                session_store.add_turn(session_id=session_id, query=request.query, report=response)
                 return response
 
         # 2. Check if direct YouTube URL was provided in the request
@@ -310,7 +326,9 @@ class ResearchService:
                 mode=mode,
             )
 
-        # Combine RAG context and Web context
+        # Combine conversational memory, RAG context, and Web context
+        history_context = session_store.format_history_for_prompt(session_id)
+
         combined_context_parts = []
         if rag_context:
             combined_context_parts.append(rag_context)
@@ -318,15 +336,20 @@ class ResearchService:
             combined_context_parts.append(web_context)
 
         combined_context = "\n\n---\n\n".join(combined_context_parts)
-        has_sources = bool(combined_context.strip())
 
-        context_section = f"Context Sources:\n{combined_context}" if has_sources else "No external source context provided. Rely on foundational knowledge."
+        context_parts = []
+        if history_context:
+            context_parts.append(history_context)
+        if combined_context.strip():
+            context_parts.append(f"Context Sources:\n{combined_context}")
+
+        context_section = "\n\n---\n\n".join(context_parts) if context_parts else "No external source context provided. Rely on foundational knowledge."
 
         # 7. Select Prompt and Temperature according to Mode
         if mode == "quick":
             selected_prompt = QUICK_PROMPT
             temperature = 0.1
-            default_conclusion = "Rapid direct summary completed."
+            default_conclusion = ""
         elif mode == "deep":
             selected_prompt = DEEP_PROMPT
             temperature = 0.3
@@ -360,16 +383,18 @@ class ResearchService:
         if not raw_answer:
             raise ModelProviderError(f"All attempted Groq models failed: {last_err}")
 
-        # 9. Parse structured findings
+        # 9. Parse structured findings level-wise
         executive_summary, findings, analysis_points, conclusion = parse_report_sections(
             raw_answer=raw_answer,
             default_conclusion=default_conclusion,
+            mode=mode,
         )
 
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
         response = ResearchResponse(
             research_id=research_id,
+            session_id=session_id,
             query=request.query,
             title=f"Research Report: {request.query[:60]}",
             executive_summary=executive_summary,
@@ -382,22 +407,25 @@ class ResearchService:
         )
 
         source_store.save_research(response)
-        logger.info(f"Completed research {research_id} in {elapsed_ms}ms [Mode: {mode}]")
+        session_store.add_turn(session_id=session_id, query=request.query, report=response)
+        logger.info(f"Completed research {research_id} in {elapsed_ms}ms [Mode: {mode}, Session: {session_id}]")
         return response
 
     async def execute_research_stream(
         self, request: ResearchRequest
     ) -> AsyncGenerator[str, None]:
         """Yields Server-Sent Events (SSE) tracking research mode, progressive thinking steps, and final report."""
+        session_id = request.session_id or f"sess_{uuid.uuid4().hex[:10]}"
+        request.session_id = session_id
         mode = request.options.mode if request.options and request.options.mode else "standard"
 
-        # Step 1: Initial Status Event
+        # Step 1: Initial Status Event with session_id
         if mode == "quick":
-            yield f"data: {json.dumps({'type': 'status', 'message': '⚡ Quick Mode: Initializing high-speed synthesis...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': '⚡ Quick Mode: High-speed flash response...', 'session_id': session_id})}\n\n"
         elif mode == "deep":
-            yield f"data: {json.dumps({'type': 'status', 'message': '🧠 Deep Research Mode: Initializing multi-perspective reasoning...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': '🧠 Deep Research Mode: Initializing multi-perspective reasoning...', 'session_id': session_id})}\n\n"
         else:
-            yield f"data: {json.dumps({'type': 'status', 'message': '📚 Standard Mode: Initializing multi-source investigation...'})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': '📚 Standard Mode: Initializing multi-source investigation...', 'session_id': session_id})}\n\n"
         await asyncio.sleep(0.04)
 
         # Step 2: Tool Detection & Source Identification
@@ -431,16 +459,16 @@ class ResearchService:
 
             # Step 4: Analysis Step
             if mode == "quick":
-                yield f"data: {json.dumps({'type': 'analysis', 'message': 'Finalizing concise direct response...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'analysis', 'message': 'Finalizing quick flash response...'})}\n\n"
             elif mode == "deep":
                 yield f"data: {json.dumps({'type': 'analysis', 'message': 'Structuring comprehensive comparative report & findings...'})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'analysis', 'message': 'Synthesizing evidence and cross-source citations...'})}\n\n"
             await asyncio.sleep(0.04)
 
-            # Step 5: Final Report Data & Done Event
-            yield f"data: {json.dumps({'type': 'report', 'data': report.model_dump()})}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'research_id': report.research_id})}\n\n"
+            # Step 5: Final Report Data & Done Event with session_id
+            yield f"data: {json.dumps({'type': 'report', 'data': report.model_dump(), 'session_id': session_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'research_id': report.research_id, 'session_id': session_id})}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
 

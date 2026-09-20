@@ -1,12 +1,13 @@
-from typing import List
-from fastapi import APIRouter, HTTPException
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Body
 from fastapi.responses import StreamingResponse
 
 from backend.app.core.exceptions import ResearchAppException
 from backend.app.models.requests import ResearchRequest
-from backend.app.models.responses import ResearchResponse, SourceInfo
+from backend.app.models.responses import ResearchResponse, SourceInfo, ChatSessionSummaryResponse
 from backend.app.services.research_service import research_service
 from backend.app.services.source_store import source_store
+from backend.app.services.session_store import session_store
 
 router = APIRouter()
 
@@ -78,3 +79,51 @@ async def delete_research_report(research_id: str):
             detail=f"Research report with ID '{research_id}' not found.",
         )
     return {"message": f"Research session '{research_id}' successfully deleted."}
+
+
+@router.get("/sessions", response_model=List[ChatSessionSummaryResponse])
+async def list_chat_sessions():
+    """Returns a list of all active chat sessions with summary metadata."""
+    sessions = session_store.list_sessions()
+    return [
+        ChatSessionSummaryResponse(
+            session_id=s.session_id,
+            title=s.title,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+            turn_count=len(s.turns),
+        )
+        for s in sessions
+    ]
+
+
+@router.get("/sessions/{session_id}")
+async def get_chat_session(session_id: str):
+    """Returns the full history of a chat session including all turns and reports."""
+    session = session_store.get_session(session_id)
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat session '{session_id}' not found.",
+        )
+    return session
+
+
+@router.post("/sessions")
+async def create_chat_session(payload: Optional[Dict[str, Any]] = Body(default=None)):
+    """Explicitly initializes a new blank chat session."""
+    title = payload.get("title") if payload else None
+    session = session_store.get_or_create_session(title=title)
+    return session
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_chat_session(session_id: str):
+    """Deletes a chat session and its full conversational history."""
+    deleted = session_store.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat session '{session_id}' not found.",
+        )
+    return {"message": f"Chat session '{session_id}' successfully deleted."}
