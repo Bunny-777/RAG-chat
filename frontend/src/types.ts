@@ -48,6 +48,7 @@ export interface ResearchOptions {
 
 export interface ResearchPayload {
   query: string;
+  session_id?: string;
   source_ids: string[];
   options: ResearchOptions;
   youtube_url?: string;
@@ -77,6 +78,7 @@ export interface CitedSource {
 
 export interface ResearchReport {
   research_id: string;
+  session_id?: string;
   query: string;
   title: string;
   executive_summary: string;
@@ -86,6 +88,32 @@ export interface ResearchReport {
   sources: CitedSource[];
   mode: ResearchMode | string;
   latency_ms: number;
+}
+
+export interface ChatTurn {
+  turn_id: string;
+  role: "user" | "assistant";
+  query?: string;
+  content: string;
+  report?: ResearchReport;
+  mode?: string;
+  timestamp: number;
+}
+
+export interface ChatSessionSummary {
+  session_id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  turn_count: number;
+}
+
+export interface ChatSessionDetail {
+  session_id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+  turns: ChatTurn[];
 }
 
 export type SSEEventType =
@@ -104,6 +132,7 @@ export interface SSEEvent {
   thought?: string;
   tool?: string;
   source_id?: string;
+  session_id?: string;
   url?: string;
   data?: ResearchReport;
   research_id?: string;

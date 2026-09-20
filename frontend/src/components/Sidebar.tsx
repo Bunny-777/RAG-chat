@@ -18,8 +18,9 @@ import {
   UploadCloud,
   Trash2,
   FileCode,
+  MessageSquare,
 } from "lucide-react";
-import type { SourceInfo, ResearchMode } from "../types";
+import type { SourceInfo, ResearchMode, ChatSessionSummary } from "../types";
 
 interface SidebarProps {
   sources: SourceInfo[];
@@ -31,6 +32,11 @@ interface SidebarProps {
   onSelectMode: (mode: ResearchMode) => void;
   webSearch: boolean;
   onToggleWebSearch: () => void;
+  sessions?: ChatSessionSummary[];
+  currentSessionId?: string | null;
+  onNewChat?: () => void;
+  onSelectSession?: (sessionId: string) => void;
+  onDeleteSession?: (sessionId: string) => void;
   onUpload: (payload: {
     url: string;
     manual_transcript?: string;
@@ -61,6 +67,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectMode,
   webSearch,
   onToggleWebSearch,
+  sessions = [],
+  currentSessionId,
+  onNewChat,
+  onSelectSession,
+  onDeleteSession,
   onUpload,
   onUploadDocument,
   onDeleteSource,
@@ -149,7 +160,63 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="w-80 md:w-88 border-r border-white/10 bg-slate-950/60 backdrop-blur-xl flex flex-col h-[calc(100vh-4rem)] overflow-y-auto p-4 gap-6 select-none">
+    <aside className="w-80 md:w-88 border-r border-white/10 bg-slate-950/60 backdrop-blur-xl flex flex-col h-[calc(100vh-4rem)] overflow-y-auto p-4 gap-5 select-none">
+      {/* 0. New Chat & Sessions Header */}
+      <div className="flex flex-col gap-2.5">
+        <button
+          type="button"
+          onClick={onNewChat}
+          className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-purple-600/30 via-indigo-600/30 to-pink-600/30 hover:from-purple-600/45 hover:to-pink-600/45 border border-purple-500/40 text-purple-200 text-xs font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-md shadow-purple-950/40 group"
+        >
+          <Plus className="w-4 h-4 text-purple-400 group-hover:rotate-90 transition-transform" />
+          <span>New Chat</span>
+        </button>
+
+        {sessions && sessions.length > 0 && (
+          <div className="flex flex-col gap-1.5 bg-slate-900/40 rounded-xl p-2.5 border border-slate-800/80">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1">
+              <span className="flex items-center gap-1.5">
+                <MessageSquare className="w-3 h-3 text-purple-400" />
+                Conversations
+              </span>
+              <span className="text-[10px] text-slate-600 font-mono">{sessions.length}</span>
+            </div>
+
+            <div className="flex flex-col gap-1 max-h-36 overflow-y-auto pr-1">
+              {sessions.map((s) => {
+                const isActive = currentSessionId === s.session_id;
+                return (
+                  <div
+                    key={s.session_id}
+                    onClick={() => onSelectSession && onSelectSession(s.session_id)}
+                    className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 cursor-pointer transition-all group ${
+                      isActive
+                        ? "bg-purple-950/70 border-purple-500/50 text-white font-medium shadow-sm"
+                        : "bg-slate-900/60 border-slate-800/70 hover:border-slate-700 text-slate-300 hover:text-white"
+                    }`}
+                  >
+                    <span className="truncate flex-1 text-[11px]">{s.title || "Research Session"}</span>
+                    {onDeleteSession && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSession(s.session_id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 p-0.5 rounded transition-all"
+                        title="Delete chat"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* 1. Add Source Card with Tabs */}
       <div className="glass rounded-2xl p-4 flex flex-col gap-3.5 border border-white/10 shadow-xl">
         {/* Source Mode Tabs */}
