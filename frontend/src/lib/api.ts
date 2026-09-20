@@ -41,6 +41,47 @@ export async function uploadSource(payload: UploadPayload): Promise<UploadRespon
   return res.json();
 }
 
+export async function uploadDocumentFile(
+  file: File,
+  options?: {
+    chunk_size?: number;
+    chunk_overlap?: number;
+    k?: number;
+  }
+): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (options?.chunk_size) {
+    formData.append("chunk_size", options.chunk_size.toString());
+  }
+  if (options?.chunk_overlap) {
+    formData.append("chunk_overlap", options.chunk_overlap.toString());
+  }
+  if (options?.k) {
+    formData.append("k", options.k.toString());
+  }
+
+  const res = await fetch(`${API_BASE_URL}/upload/file`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || errorData.message || `Document upload failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function deleteSource(sourceId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/sources/${sourceId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || errorData.message || `Failed to delete source: ${res.statusText}`);
+  }
+}
+
 export async function executeResearch(payload: ResearchPayload): Promise<ResearchReport> {
   const res = await fetch(`${API_BASE_URL}/research`, {
     method: "POST",

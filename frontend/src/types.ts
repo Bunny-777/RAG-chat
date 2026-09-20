@@ -12,7 +12,7 @@ export interface SourceMetadata {
 export interface SourceInfo {
   source_id: string;
   source_type: string;
-  url: string;
+  url?: string | null;
   title: string;
   language?: string;
   chunk_count: number;
@@ -22,7 +22,7 @@ export interface SourceInfo {
 export interface SourceListItem {
   source_id: string;
   title: string;
-  url: string;
+  url?: string | null;
   chunk_count: number;
 }
 
@@ -93,6 +93,7 @@ export type SSEEventType =
   | "tool_call"
   | "source_found"
   | "analysis"
+  | "thinking"
   | "report"
   | "done"
   | "error";
@@ -100,6 +101,7 @@ export type SSEEventType =
 export interface SSEEvent {
   type: SSEEventType;
   message?: string;
+  thought?: string;
   tool?: string;
   source_id?: string;
   url?: string;

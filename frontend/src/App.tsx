@@ -17,6 +17,8 @@ import {
   fetchHealth,
   fetchSources,
   uploadSource,
+  uploadDocumentFile,
+  deleteSource,
   executeResearchStream,
 } from "./lib/api";
 import { Sparkles, Video, Layers, ShieldCheck } from "lucide-react";
@@ -30,6 +32,7 @@ export function App() {
   const [webSearch, setWebSearch] = useState(false);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [isResearching, setIsResearching] = useState(false);
   const [streamEvents, setStreamEvents] = useState<SSEEvent[]>([]);
   const [currentReport, setCurrentReport] = useState<ResearchReport | null>(null);
@@ -97,6 +100,45 @@ export function App() {
       addToast("error", (err as Error).message || "Failed to index source.");
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  // Handle uploading document source
+  const handleUploadDocument = async (
+    file: File,
+    options?: {
+      chunk_size?: number;
+      chunk_overlap?: number;
+      k?: number;
+    }
+  ) => {
+    setIsUploadingDoc(true);
+    try {
+      const res = await uploadDocumentFile(file, options);
+      addToast("success", res.message || `Document '${file.name}' indexed successfully!`);
+      setSources((prev) => {
+        const filtered = prev.filter((s) => s.source_id !== res.source.source_id);
+        return [...filtered, res.source];
+      });
+      setSelectedSourceIds((prev) =>
+        prev.includes(res.source.source_id) ? prev : [...prev, res.source.source_id]
+      );
+    } catch (err: unknown) {
+      addToast("error", (err as Error).message || "Failed to index document.");
+    } finally {
+      setIsUploadingDoc(false);
+    }
+  };
+
+  // Handle removing a source
+  const handleDeleteSource = async (sourceId: string) => {
+    try {
+      await deleteSource(sourceId);
+      addToast("info", "Source removed.");
+      setSources((prev) => prev.filter((s) => s.source_id !== sourceId));
+      setSelectedSourceIds((prev) => prev.filter((id) => id !== sourceId));
+    } catch (err: unknown) {
+      addToast("error", (err as Error).message || "Failed to delete source.");
     }
   };
 
@@ -175,7 +217,10 @@ export function App() {
           webSearch={webSearch}
           onToggleWebSearch={() => setWebSearch(!webSearch)}
           onUpload={handleUpload}
+          onUploadDocument={handleUploadDocument}
+          onDeleteSource={handleDeleteSource}
           isUploading={isUploading}
+          isUploadingDocument={isUploadingDoc}
         />
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-8 flex flex-col gap-8">

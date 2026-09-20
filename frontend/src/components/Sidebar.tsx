@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   Video,
   Plus,
@@ -15,6 +15,9 @@ import {
   Layers,
   Loader2,
   ExternalLink,
+  UploadCloud,
+  Trash2,
+  FileCode,
 } from "lucide-react";
 import type { SourceInfo, ResearchMode } from "../types";
 
@@ -35,7 +38,17 @@ interface SidebarProps {
     chunk_overlap: number;
     k: number;
   }) => Promise<void>;
+  onUploadDocument?: (
+    file: File,
+    options?: {
+      chunk_size?: number;
+      chunk_overlap?: number;
+      k?: number;
+    }
+  ) => Promise<void>;
+  onDeleteSource?: (sourceId: string) => Promise<void>;
   isUploading: boolean;
+  isUploadingDocument?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -49,10 +62,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   webSearch,
   onToggleWebSearch,
   onUpload,
+  onUploadDocument,
+  onDeleteSource,
   isUploading,
+  isUploadingDocument = false,
 }) => {
+  const [activeTab, setActiveTab] = useState<"youtube" | "document">("youtube");
   const [url, setUrl] = useState("");
   const [manualTranscript, setManualTranscript] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [chunkSize, setChunkSize] = useState(1000);
   const [chunkOverlap, setChunkOverlap] = useState(200);
   const [k, setK] = useState(4);
@@ -73,153 +94,293 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setManualTranscript("");
   };
 
+  const handleDocumentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile || !onUploadDocument) return;
+    await onUploadDocument(selectedFile, {
+      chunk_size: chunkSize,
+      chunk_overlap: chunkOverlap,
+      k,
+    });
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setSelectedFile(e.target.files[0]);
+    }
+  };
+
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setSelectedFile(e.dataTransfer.files[0]);
+    }
+  };
+
   const isAllSelected =
     sources.length > 0 && selectedSourceIds.length === sources.length;
 
+  const getSourceIcon = (src: SourceInfo) => {
+    if (src.source_type === "document") {
+      const titleLower = (src.title || "").toLowerCase();
+      if (titleLower.endsWith(".pdf")) {
+        return <FileText className="w-4 h-4 text-red-400" />;
+      }
+      if (titleLower.endsWith(".docx") || titleLower.endsWith(".doc")) {
+        return <FileText className="w-4 h-4 text-blue-400" />;
+      }
+      return <FileCode className="w-4 h-4 text-emerald-400" />;
+    }
+    return <Video className="w-4 h-4 text-red-500" />;
+  };
+
   return (
     <aside className="w-80 md:w-88 border-r border-white/10 bg-slate-950/60 backdrop-blur-xl flex flex-col h-[calc(100vh-4rem)] overflow-y-auto p-4 gap-6 select-none">
-      {/* 1. Add Source Card */}
+      {/* 1. Add Source Card with Tabs */}
       <div className="glass rounded-2xl p-4 flex flex-col gap-3.5 border border-white/10 shadow-xl">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-200 uppercase tracking-wider">
-            <Video className="w-4 h-4 text-red-500" />
-            <span>Add YouTube Source</span>
-          </div>
+        {/* Source Mode Tabs */}
+        <div className="flex rounded-xl bg-slate-900/90 p-1 border border-slate-800">
+          <button
+            type="button"
+            onClick={() => setActiveTab("youtube")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === "youtube"
+                ? "bg-red-950/70 text-red-300 border border-red-500/30 shadow-sm"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Video className="w-3.5 h-3.5 text-red-500" />
+            <span>YouTube</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("document")}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === "document"
+                ? "bg-purple-950/70 text-purple-300 border border-purple-500/30 shadow-sm"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <UploadCloud className="w-3.5 h-3.5 text-purple-400" />
+            <span>Document</span>
+          </button>
         </div>
 
-        <form onSubmit={handleUploadSubmit} className="flex flex-col gap-3">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="https://youtube.com/watch?v=..."
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              disabled={isUploading}
-              className="w-full text-xs bg-slate-900/90 border border-slate-800 focus:border-purple-500 rounded-xl px-3.5 py-2.5 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all font-mono"
-            />
-          </div>
-
-          {/* Advanced Settings Toggle */}
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition-colors py-1 px-1"
-            >
-              <span className="flex items-center gap-1.5">
-                <Sliders className="w-3 h-3 text-purple-400" />
-                Advanced Indexing Settings
-              </span>
-              {showAdvanced ? (
-                <ChevronUp className="w-3 h-3" />
-              ) : (
-                <ChevronDown className="w-3 h-3" />
-              )}
-            </button>
-
-            {showAdvanced && (
-              <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800 flex flex-col gap-2.5 animate-fade-in-up">
-                <div>
-                  <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
-                    <span>Chunk Size</span>
-                    <span className="text-purple-400 font-bold">{chunkSize}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="500"
-                    max="2000"
-                    step="100"
-                    value={chunkSize}
-                    onChange={(e) => setChunkSize(Number(e.target.value))}
-                    className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
-                    <span>Overlap</span>
-                    <span className="text-purple-400 font-bold">{chunkOverlap}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="400"
-                    step="50"
-                    value={chunkOverlap}
-                    onChange={(e) => setChunkOverlap(Number(e.target.value))}
-                    className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
-                    <span>Retrieval Top-K</span>
-                    <span className="text-purple-400 font-bold">{k}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="8"
-                    step="1"
-                    value={k}
-                    onChange={(e) => setK(Number(e.target.value))}
-                    className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Manual Transcript Toggle */}
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={() => setShowManual(!showManual)}
-              className="flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition-colors py-1 px-1"
-            >
-              <span className="flex items-center gap-1.5">
-                <FileText className="w-3 h-3 text-amber-400" />
-                Paste Manual Transcript Fallback
-              </span>
-              {showManual ? (
-                <ChevronUp className="w-3 h-3" />
-              ) : (
-                <ChevronDown className="w-3 h-3" />
-              )}
-            </button>
-
-            {showManual && (
-              <textarea
-                placeholder="Paste transcript text here if YouTube captions are unavailable..."
-                value={manualTranscript}
-                onChange={(e) => setManualTranscript(e.target.value)}
-                rows={3}
-                className="w-full text-[11px] bg-slate-900/90 border border-slate-800 focus:border-amber-500 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none font-mono resize-none animate-fade-in-up"
+        {/* Tab 1: YouTube Form */}
+        {activeTab === "youtube" ? (
+          <form onSubmit={handleUploadSubmit} className="flex flex-col gap-3">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="https://youtube.com/watch?v=..."
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                disabled={isUploading}
+                className="w-full text-xs bg-slate-900/90 border border-slate-800 focus:border-purple-500 rounded-xl px-3.5 py-2.5 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500/50 transition-all font-mono"
               />
-            )}
-          </div>
+            </div>
 
+            {/* Manual Transcript Toggle */}
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setShowManual(!showManual)}
+                className="flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition-colors py-1 px-1"
+              >
+                <span className="flex items-center gap-1.5">
+                  <FileText className="w-3 h-3 text-amber-400" />
+                  Paste Manual Transcript Fallback
+                </span>
+                {showManual ? (
+                  <ChevronUp className="w-3 h-3" />
+                ) : (
+                  <ChevronDown className="w-3 h-3" />
+                )}
+              </button>
+
+              {showManual && (
+                <textarea
+                  placeholder="Paste transcript text here if YouTube captions are unavailable..."
+                  value={manualTranscript}
+                  onChange={(e) => setManualTranscript(e.target.value)}
+                  rows={3}
+                  className="w-full text-[11px] bg-slate-900/90 border border-slate-800 focus:border-amber-500 rounded-xl p-2.5 text-slate-100 placeholder:text-slate-600 focus:outline-none font-mono resize-none animate-fade-in-up"
+                />
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={isUploading || !url.trim()}
+              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-red-600 to-purple-600 hover:from-red-500 hover:to-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 transition-all active:scale-[0.98]"
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Indexing Video...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Index Video Source</span>
+                </>
+              )}
+            </button>
+          </form>
+        ) : (
+          /* Tab 2: Document Upload Form */
+          <form onSubmit={handleDocumentSubmit} className="flex flex-col gap-3">
+            <div
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-all ${
+                dragActive
+                  ? "border-purple-400 bg-purple-950/40"
+                  : selectedFile
+                  ? "border-emerald-500/50 bg-emerald-950/20"
+                  : "border-slate-800 hover:border-purple-500/50 bg-slate-900/40 hover:bg-slate-900/70"
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx,.doc,.txt,.md,.markdown,.json,.csv"
+                onChange={handleFileChange}
+                className="hidden"
+                disabled={isUploadingDocument}
+              />
+              <UploadCloud className={`w-6 h-6 mb-1.5 ${selectedFile ? "text-emerald-400" : "text-purple-400"}`} />
+              {selectedFile ? (
+                <div className="flex flex-col items-center">
+                  <span className="text-xs font-medium text-emerald-300 truncate max-w-[220px]">
+                    {selectedFile.name}
+                  </span>
+                  <span className="text-[10px] text-slate-500">
+                    {(selectedFile.size / 1024).toFixed(1)} KB • Click to change
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center">
+                  <span className="text-xs font-medium text-slate-200">
+                    Choose or drop document
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5">
+                    PDF, DOCX, TXT, MD
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              disabled={isUploadingDocument || !selectedFile}
+              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 transition-all active:scale-[0.98]"
+            >
+              {isUploadingDocument ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Parsing & Chunking Document...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Index Document for RAG</span>
+                </>
+              )}
+            </button>
+          </form>
+        )}
+
+        {/* Shared Advanced Settings Toggle */}
+        <div className="flex flex-col gap-2 pt-1 border-t border-slate-800/80">
           <button
-            type="submit"
-            disabled={isUploading || !url.trim()}
-            className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 transition-all active:scale-[0.98]"
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center justify-between text-[11px] text-slate-400 hover:text-slate-200 transition-colors py-1 px-1"
           >
-            {isUploading ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Processing & Indexing...</span>
-              </>
+            <span className="flex items-center gap-1.5">
+              <Sliders className="w-3 h-3 text-purple-400" />
+              Advanced Indexing Settings
+            </span>
+            {showAdvanced ? (
+              <ChevronUp className="w-3 h-3" />
             ) : (
-              <>
-                <Plus className="w-3.5 h-3.5" />
-                <span>Index Video Source</span>
-              </>
+              <ChevronDown className="w-3 h-3" />
             )}
           </button>
-        </form>
+
+          {showAdvanced && (
+            <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800 flex flex-col gap-2.5 animate-fade-in-up">
+              <div>
+                <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
+                  <span>Chunk Size</span>
+                  <span className="text-purple-400 font-bold">{chunkSize}</span>
+                </div>
+                <input
+                  type="range"
+                  min="300"
+                  max="2000"
+                  step="100"
+                  value={chunkSize}
+                  onChange={(e) => setChunkSize(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
+                  <span>Overlap</span>
+                  <span className="text-purple-400 font-bold">{chunkOverlap}</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="400"
+                  step="50"
+                  value={chunkOverlap}
+                  onChange={(e) => setChunkOverlap(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
+                  <span>Retrieval Top-K</span>
+                  <span className="text-purple-400 font-bold">{k}</span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="8"
+                  step="1"
+                  value={k}
+                  onChange={(e) => setK(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* 2. Indexed Sources List */}
+      {/* 2. Active Indexed Sources List */}
       <div className="flex flex-col gap-3 flex-1">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs font-semibold text-slate-200 uppercase tracking-wider">
@@ -239,10 +400,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {sources.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-800 p-6 flex flex-col items-center justify-center text-center gap-2 bg-slate-900/20">
-            <Video className="w-8 h-8 text-slate-700" />
+            <Layers className="w-8 h-8 text-slate-700" />
             <p className="text-xs text-slate-500">No sources indexed yet.</p>
             <p className="text-[10px] text-slate-600">
-              Paste a YouTube link above to start researching.
+              Paste a YouTube link or upload a document to begin.
             </p>
           </div>
         ) : (
@@ -253,7 +414,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div
                   key={src.source_id}
                   onClick={() => onToggleSource(src.source_id)}
-                  className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-start gap-2.5 ${
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-start gap-2.5 group ${
                     isSelected
                       ? "bg-purple-950/40 border-purple-500/40 shadow-sm"
                       : "bg-slate-900/40 border-slate-800/80 hover:border-slate-700"
@@ -269,6 +430,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
+                      {getSourceIcon(src)}
                       <span className="text-xs font-medium text-slate-200 truncate">
                         {src.title || src.source_id}
                       </span>
@@ -278,26 +440,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">
                         {src.chunk_count} chunks
                       </span>
-                      {src.language && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
-                          {src.language}
-                        </span>
-                      )}
+                      <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 border border-indigo-800 uppercase">
+                        {src.source_type}
+                      </span>
                     </div>
                   </div>
 
-                  {src.url && (
-                    <a
-                      href={src.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800 transition-colors"
-                      title="Open video in YouTube"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  )}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {src.url && (
+                      <a
+                        href={src.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-slate-500 hover:text-slate-300 p-1 rounded hover:bg-slate-800 transition-colors"
+                        title="Open external source"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                    {onDeleteSource && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSource(src.source_id);
+                        }}
+                        className="text-slate-600 hover:text-red-400 p-1 rounded hover:bg-red-950/30 transition-colors opacity-0 group-hover:opacity-100"
+                        title="Remove source"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
