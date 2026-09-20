@@ -177,3 +177,33 @@ def test_research_streaming_endpoint(sample_transcript_text):
         body = res.text
         assert "data: " in body
         assert "tool_call" in body or "status" in body or "report" in body
+
+
+def test_upload_document_and_delete_endpoint():
+    fake_embeddings = FakeEmbeddings(size=384)
+    file_bytes = b"This is a technical whitepaper on AI research and Retrieval Augmented Generation."
+
+    with patch("backend.app.rag.vectorstore.get_embeddings", return_value=fake_embeddings):
+        # 1. Upload document file
+        files = {"file": ("whitepaper.txt", file_bytes, "text/plain")}
+        res = client.post("/upload/file", files=files, data={"chunk_size": 200, "k": 2})
+        assert res.status_code == 200
+        data = res.json()
+        assert "whitepaper.txt" in data["message"]
+        source_id = data["source"]["source_id"]
+        assert data["source"]["source_type"] == "document"
+
+        # 2. Check source in list
+        sources_res = client.get("/sources")
+        assert sources_res.status_code == 200
+        source_ids = [s["source_id"] for s in sources_res.json()]
+        assert source_id in source_ids
+
+        # 3. Delete source
+        del_res = client.delete(f"/sources/{source_id}")
+        assert del_res.status_code == 200
+        assert "successfully removed" in del_res.json()["message"]
+
+        # 4. Verify gone
+        get_res = client.get(f"/sources/{source_id}")
+        assert get_res.status_code == 404

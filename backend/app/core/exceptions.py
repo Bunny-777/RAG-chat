@@ -30,6 +30,12 @@ class IngestionError(ResearchAppException):
     pass
 
 
+class DocumentIngestionError(IngestionError):
+    """Raised when parsing or indexing an uploaded document fails."""
+    pass
+
+
 class ModelProviderError(ResearchAppException):
     """Raised when an external LLM or Embedding provider fails."""
     pass
+
