@@ -22,8 +22,10 @@ from backend.app.tools.web_search import web_search
 logger = get_logger(__name__)
 
 QUICK_PROMPT = PromptTemplate(
-    template="""You are an ultra-fast, direct AI Assistant.
+    template="""You are an ultra-fast, direct AI Assistant with live web search, academic papers, and multi-source context.
 Answer the user's question directly, clearly, and concisely in 1 to 2 brief paragraphs or 3-4 succinct bullet points maximum.
+If the question asks about prices, products, models, specifications, or real-time facts, state the exact numbers, models, and prices directly.
+Always attribute where the information came from (e.g., "According to Apple (apple.com)..." or "Per [Website/Paper]...").
 Do NOT output section headers like 'Executive Summary', 'Key Findings', or 'Conclusion'.
 Deliver ONLY the bottom line and core answer immediately.
 
@@ -36,21 +38,28 @@ Answer:""",
 
 STANDARD_PROMPT = PromptTemplate(
     template="""You are an expert AI Research Analyst.
-Answer the user's research question by synthesizing verified information from ALL available sources provided below.
-Compare and explicitly cite findings from the sources (e.g. refer to "[Source: <name>]").
-Highlight consensus, differences, and specific facts extracted across the sources.
+Answer the user's research question by synthesizing verified information from ALL available sources provided below (including live web search results, research papers, documents, and transcripts).
+Compare and explicitly cite findings from the sources (e.g. refer to "[Source: <Website/Domain/Document/Paper>]").
+
+Citation and Fact Guidelines:
+- If the query asks for pricing, specs, or products, state exact prices, storage tiers, models, and numbers directly.
+- For web search sources, cite the website name/domain (e.g. "[Source: Apple.com]", "[Source: Best Buy]", "[Source: Amazon]").
+- For academic papers, cite the paper title, authors, or arXiv ID (e.g. "[Source: Paper - Attention Is All You Need (arXiv:1706.03762)]").
+- For uploaded documents, cite the document name (e.g. "[Source: Document - report.pdf]").
+- For YouTube videos, cite the video title.
+- Highlight consensus, differences, and specific facts extracted across the sources.
 
 Structure your answer with:
 ### Executive Summary
-A concise overview answering the query based on the sources.
+A concise overview directly answering the query with key numbers, prices, or takeaways based on the sources.
 
 ### Key Findings
-- Key point 1 with source reference
-- Key point 2 with source reference
-- Key point 3 with source reference
+- Key point 1 with specific facts and explicit source reference
+- Key point 2 with specific facts and explicit source reference
+- Key point 3 with specific facts and explicit source reference
 
 ### Detailed Analysis
-In-depth synthesized explanation across all sources.
+In-depth synthesized explanation across all sources with concrete data, pricing, or methodology breakdown.
 
 ### Conclusion
 Final synthesis and concluding remarks.
@@ -64,28 +73,31 @@ Answer:""",
 
 DEEP_PROMPT = PromptTemplate(
     template="""You are a Principal AI Research Scientist performing an exhaustive, deep comparative research investigation.
-Perform a rigorous, multi-perspective, comparative analysis of the question using the available context.
+Perform a rigorous, multi-perspective, comparative analysis of the question using the available context (web intelligence, academic papers, documents, and transcripts).
 
 You must:
-1. Deep Comparative Analysis: Rigorously compare and contrast viewpoints, methodologies, and claims across different sources or analytical angles.
-2. Nuances & Trade-offs: Identify underlying assumptions, critical nuances, trade-offs, and evidence discrepancies.
-3. Comparative Evaluation: Evaluate the topic along key critical dimensions.
-4. Actionable Strategic Synthesis: Provide strategic conclusions and implications.
+1. Deep Comparative Analysis: Rigorously compare and contrast viewpoints, pricing/spec tiers, methodologies, and claims across different sources or analytical angles.
+2. Explicit Source Attribution: Explicitly state the source for every data point, price, or finding:
+   - For web data: name the website and domain (e.g. "[Source: Apple (apple.com)]", "[Source: GSM Arena]").
+   - For research papers: cite paper title, primary authors, and arXiv ID (e.g. "[Source: Paper - Attention Is All You Need, Vaswani et al.]").
+   - For uploaded documents: cite the document filename.
+3. Nuances & Trade-offs: Identify underlying assumptions, critical nuances, trade-offs, and evidence discrepancies.
+4. Actionable Strategic Synthesis: Provide strategic conclusions, recommendations, and implications.
 
 Structure your response with the following markdown headers:
 ### Executive Summary
-Detailed executive summary framing the problem and overarching thesis.
+Detailed executive summary framing the problem, core findings, key numbers/prices, and overarching thesis.
 
 ### Comparative Analysis & Multi-Source Perspectives
-In-depth comparison of perspectives, contrasting viewpoints, and source arguments.
+In-depth comparison of perspectives, contrasting viewpoints, price tiers, or source arguments with explicit citations.
 
 ### Key Research Findings & Evidence Evaluation
-- Finding 1: Detailed analysis with evidence evaluation
-- Finding 2: Detailed analysis with evidence evaluation
-- Finding 3: Detailed analysis with evidence evaluation
+- Finding 1: Detailed analysis with evidence evaluation and source citation
+- Finding 2: Detailed analysis with evidence evaluation and source citation
+- Finding 3: Detailed analysis with evidence evaluation and source citation
 
 ### Trade-Offs, Discrepancies & Limitations
-Critical discussion of edge cases, trade-offs, evidentiary gaps, and caveats.
+Critical discussion of edge cases, trade-offs, price-to-performance, evidentiary gaps, and caveats.
 
 ### Strategic Conclusion & Recommendations
 Authoritative, forward-looking strategic conclusion.
@@ -269,62 +281,90 @@ class ResearchService:
                 url=request.youtube_url,
                 manual_transcript=request.manual_transcript,
             )
-            src_info = source_store.add_youtube_source(index_res)
-            sources_used.append(src_info)
+            source_store.add_youtube_source(index_res)
             target_indices.append(index_res)
 
-        # 3. Check explicitly provided source_ids
-        if request.source_ids:
+        # 3. Handle source_ids strictly:
+        # If user explicitly passed an empty list [], do NOT load any old uploaded documents.
+        # If user passed specific IDs, load only those IDs.
+        # If source_ids is None and no direct YouTube URL is given, only fallback to indexed sources
+        # if web search is not explicitly forced.
+        if request.source_ids is not None:
             for sid in request.source_ids:
                 idx = source_store.get_source_index(sid)
                 if idx:
                     target_indices.append(idx)
-                    info = source_store.get_source_info(sid)
-                    if info and info not in sources_used:
-                        sources_used.append(info)
                 else:
                     logger.warning(f"Source ID '{sid}' not found in store.")
-
-        # 4. If no specific source was provided, use all indexed sources if available
-        if not target_indices and not request.source_ids:
+        elif not request.youtube_url and not (request.options and request.options.web_search):
             all_sources = source_store.list_sources()
             for s in all_sources:
                 idx = source_store.get_source_index(s.source_id)
                 if idx:
                     target_indices.append(idx)
-                    if s not in sources_used:
-                        sources_used.append(s)
 
-        # 5. Check if Web Search Tool is requested
-        web_search_results = []
-        web_context = ""
-        if request.options and request.options.web_search:
-            logger.info(f"Executing Web Search Tool for query: '{request.query}'")
-            search_out = web_search(request.query)
-            web_search_results = search_out.get("results", [])
-            for r in web_search_results:
-                sources_used.append(
-                    SourceInfo(
-                        source_id=f"web_{uuid.uuid4().hex[:6]}",
-                        source_type="web",
-                        url=r.get("url"),
-                        title=r.get("title") or "Web Search Result",
-                        language="en",
-                        chunk_count=1,
-                    )
-                )
-            if web_search_results:
-                snippets = [f"[Source: Web Search - {r.get('title')}]\nURL: {r.get('url')}\n{r.get('snippet')}" for r in web_search_results if r.get("snippet")]
-                web_context = "\n\n".join(snippets)
-
-        # 6. Retrieve Multi-Source Context across all target indices
+        # 4. Retrieve Multi-Source Context across active target indices
         rag_context = ""
         if target_indices:
-            rag_context, _ = self._retrieve_multi_source_context(
+            rag_context, chunks_collected = self._retrieve_multi_source_context(
                 query=request.query,
                 indices=target_indices,
                 mode=mode,
             )
+            # Strictly add ONLY sources whose chunks were actually matched and retrieved!
+            used_sids = {c["source_id"] for c in chunks_collected}
+            for sid in used_sids:
+                info = source_store.get_source_info(sid)
+                if info and info not in sources_used:
+                    sources_used.append(info)
+
+        # 5. Determine whether Web Search Tool should run:
+        # Runs if explicitly enabled (options.web_search=True) OR if the query is an open real-world/pricing/academic question without document indices
+        should_web_search = bool(request.options and request.options.web_search)
+        if not should_web_search and not target_indices and not request.youtube_url:
+            query_lower = request.query.lower()
+            intent_keywords = [
+                "search internet", "search web", "google", "online", "search the web",
+                "price of", "cost of", "how much is", "how much does", "specs of",
+                "latest", "release date", "research paper", "paper", "arxiv",
+            ]
+            if any(k in query_lower for k in intent_keywords):
+                should_web_search = True
+
+        web_search_results = []
+        web_context = ""
+        if should_web_search:
+            logger.info(f"Executing Web & Paper Search Tool for query: '{request.query}'")
+            search_out = web_search(request.query)
+            web_search_results = search_out.get("results", [])
+            for r in web_search_results:
+                src_type = r.get("source_type", "web")
+                domain = r.get("domain") or ("arxiv.org" if src_type == "research_paper" else "web")
+                meta = r.get("metadata", {})
+                meta["domain"] = domain
+                meta["snippet"] = r.get("snippet", "")
+                sources_used.append(
+                    SourceInfo(
+                        source_id=f"{src_type}_{uuid.uuid4().hex[:6]}",
+                        source_type=src_type,
+                        url=r.get("url"),
+                        title=r.get("title") or ("Research Paper" if src_type == "research_paper" else "Web Source"),
+                        language="en",
+                        chunk_count=1,
+                        metadata=meta,
+                    )
+                )
+            if web_search_results:
+                snippets = []
+                for r in web_search_results:
+                    stype = "Academic Research Paper" if r.get("source_type") == "research_paper" else "Live Web Source"
+                    domain = r.get("domain", "web")
+                    snippets.append(
+                        f"[Source: {stype} - {r.get('title')} ({domain})]\n"
+                        f"URL: {r.get('url')}\n"
+                        f"Information: {r.get('snippet')}"
+                    )
+                web_context = "\n\n".join(snippets)
 
         # Combine conversational memory, RAG context, and Web context
         history_context = session_store.format_history_for_prompt(session_id)
@@ -432,12 +472,18 @@ class ResearchService:
         math_expr = extract_math_expression(request.query)
         if math_expr:
             yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'calculator', 'message': f'Evaluating mathematical calculation: {math_expr}'})}\n\n"
-        elif request.options and request.options.web_search:
-            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'web_search', 'message': 'Searching live web for supplementary citations...'})}\n\n"
 
-        if request.youtube_url or request.source_ids or source_store.list_sources():
-            active_sources = source_store.list_sources()
-            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'multi_rag', 'message': f'Querying vector indices across {len(active_sources) or 1} active source(s)...'})}\n\n"
+        has_explicit_docs = bool(request.source_ids or request.youtube_url)
+        has_fallback_docs = request.source_ids is None and bool(source_store.list_sources()) and not (request.options and request.options.web_search)
+        has_active_docs = has_explicit_docs or has_fallback_docs
+
+        should_search_web = bool(request.options and request.options.web_search) or not has_active_docs
+        if should_search_web:
+            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'web_search', 'message': f'Searching live web and academic sources for: {request.query[:50]}...'})}\n\n"
+
+        if has_active_docs:
+            count = len(request.source_ids) if request.source_ids is not None else len(source_store.list_sources())
+            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'multi_rag', 'message': f'Querying vector indices across {count or 1} selected document source(s)...'})}\n\n"
 
         await asyncio.sleep(0.04)
 

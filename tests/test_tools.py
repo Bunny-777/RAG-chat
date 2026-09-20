@@ -35,3 +35,26 @@ def test_web_search_tool():
     res = web_search("Python programming language")
     assert res["tool"] == "web_search"
     assert "results" in res
+    assert res["results_count"] > 0
+    first = res["results"][0]
+    assert "url" in first
+    assert "title" in first
+
+
+def test_web_search_pricing_query():
+    res = web_search("price of new iphone")
+    assert res["tool"] == "web_search"
+    assert res["results_count"] > 0
+    # Verified that at least one result has an organic domain
+    domains = [r.get("domain", "") for r in res["results"]]
+    assert any(len(d) > 0 for d in domains)
+
+
+def test_web_search_arxiv_paper_query():
+    res = web_search("attention is all you need research paper")
+    assert res["tool"] == "web_search"
+    assert res["results_count"] > 0
+    # Verified that results contain paper or web sources
+    types = [r.get("source_type") for r in res["results"]]
+    assert any(t in ["web", "research_paper"] for t in types)
+

@@ -16,6 +16,7 @@ import {
   Brain,
   Scale,
   Sparkles,
+  BookOpen,
 } from "lucide-react";
 import type { ResearchReport } from "../types";
 import { formatLatency, reportToMarkdown, downloadMarkdown } from "../lib/utils";
@@ -60,9 +61,19 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ report }) => {
   const renderSourceChip = (src: Record<string, unknown>, idx: number) => {
     const title = (src.title as string) || (src.source_id as string) || `Source ${idx + 1}`;
     const url = (src.url as string) || "";
-    const srcId = ((src.source_id as string) || "").toLowerCase();
-    const isWeb = srcId.startsWith("web") || (src.source_type as string) === "web";
-    const isDoc = (src.source_type as string) === "document" || title.endsWith(".pdf") || title.endsWith(".docx") || title.endsWith(".txt") || title.endsWith(".md");
+    const srcType = ((src.source_type as string) || "").toLowerCase();
+    const isPaper = srcType === "research_paper" || srcType === "arxiv" || url.includes("arxiv.org") || title.toLowerCase().includes("arxiv");
+    const isDoc = srcType === "document" || title.endsWith(".pdf") || title.endsWith(".docx") || title.endsWith(".txt") || title.endsWith(".md");
+    const isWeb = srcType === "web" || srcType === "wikipedia" || (!isPaper && !isDoc && url.startsWith("http"));
+
+    let domain = "";
+    if (url) {
+      try {
+        domain = new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        domain = "";
+      }
+    }
 
     return (
       <a
@@ -70,19 +81,29 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ report }) => {
         href={url || "#"}
         target={url ? "_blank" : undefined}
         rel="noreferrer"
-        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-200 transition-all group"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-200 transition-all group shadow-sm hover:scale-[1.02]"
+        title={url ? `Open external link: ${url}` : title}
       >
-        {isWeb ? (
-          <Globe className="w-3.5 h-3.5 text-emerald-400" />
+        {isPaper ? (
+          <BookOpen className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+        ) : isWeb ? (
+          <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
         ) : isDoc ? (
-          <FileText className="w-3.5 h-3.5 text-purple-400" />
+          <FileText className="w-3.5 h-3.5 text-purple-400 shrink-0" />
         ) : (
-          <Video className="w-3.5 h-3.5 text-red-500" />
+          <Video className="w-3.5 h-3.5 text-red-500 shrink-0" />
         )}
-        <span className="font-medium group-hover:text-purple-300 transition-colors truncate max-w-[200px]">
+        
+        {domain && (
+          <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-semibold shrink-0">
+            {domain}
+          </span>
+        )}
+
+        <span className="font-medium group-hover:text-purple-300 transition-colors truncate max-w-[220px]">
           {title}
         </span>
-        {url && <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-slate-300" />}
+        {url && <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-slate-300 shrink-0" />}
       </a>
     );
   };

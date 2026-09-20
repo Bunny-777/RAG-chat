@@ -33,7 +33,7 @@ export function App() {
   const [sources, setSources] = useState<SourceInfo[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [researchMode, setResearchMode] = useState<ResearchMode>("standard");
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch, setWebSearch] = useState(true);
 
   // Chat sessions & conversation memory
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
@@ -82,9 +82,7 @@ export function App() {
     try {
       const srcList = await fetchSources();
       setSources(srcList);
-      if (srcList.length > 0) {
-        setSelectedSourceIds(srcList.map((s) => s.source_id));
-      }
+      // Keep selectedSourceIds empty by default so general/web queries do NOT attach previous documents
     } catch (err) {
       console.warn("Could not fetch sources:", err);
     }
@@ -106,7 +104,9 @@ export function App() {
     setCurrentSessionId(null);
     setActiveTurns([]);
     setStreamEvents([]);
-    addToast("info", "Started new conversation.");
+    // Clear any previous document selection so new chat is fresh
+    setSelectedSourceIds([]);
+    addToast("info", "Started new conversation (no files attached).");
   };
 
   // Switch to an existing session
@@ -402,6 +402,9 @@ export function App() {
               selectedSourcesCount={selectedSourceIds.length}
               researchMode={researchMode}
               onChangeMode={setResearchMode}
+              webSearch={webSearch}
+              onToggleWebSearch={() => setWebSearch((prev) => !prev)}
+              onClearSourcesSelection={handleClearSourcesSelection}
             />
           </div>
         </main>

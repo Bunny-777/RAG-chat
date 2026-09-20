@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { Search, Sparkles, CornerDownLeft, Video, ArrowRight, Zap, BookOpen, Brain } from "lucide-react";
+import { Search, Sparkles, CornerDownLeft, Video, ArrowRight, Zap, BookOpen, Brain, Globe, FileText } from "lucide-react";
 import type { ResearchMode } from "../types";
 
 interface ResearchPromptBarProps {
@@ -8,6 +8,9 @@ interface ResearchPromptBarProps {
   selectedSourcesCount: number;
   researchMode: ResearchMode;
   onChangeMode?: (mode: ResearchMode) => void;
+  webSearch?: boolean;
+  onToggleWebSearch?: () => void;
+  onClearSourcesSelection?: () => void;
 }
 
 const SAMPLE_QUERIES = [
@@ -47,6 +50,9 @@ export const ResearchPromptBar: React.FC<ResearchPromptBarProps> = ({
   selectedSourcesCount,
   researchMode,
   onChangeMode,
+  webSearch = true,
+  onToggleWebSearch,
+  onClearSourcesSelection,
 }) => {
   const [query, setQuery] = useState("");
   const [inlineYoutubeUrl, setInlineYoutubeUrl] = useState("");
@@ -75,9 +81,43 @@ export const ResearchPromptBar: React.FC<ResearchPromptBarProps> = ({
 
   return (
     <div className="flex flex-col gap-3 max-w-4xl mx-auto w-full">
-      <div className="relative glass rounded-2xl p-2.5 border border-white/10 shadow-2xl focus-within:border-purple-500/50 focus-within:ring-2 focus-within:ring-purple-500/20 transition-all bg-slate-950/70">
+      <div className="relative glass rounded-2xl p-2.5 border border-white/10 shadow-2xl focus-within:border-purple-500/50 focus-within:ring-2 focus-within:ring-purple-500/20 transition-all bg-slate-950/70 overflow-hidden">
+        {/* Active Context Banner */}
+        <div className="px-3 py-1.5 -mx-2.5 -mt-2.5 mb-2 border-b border-slate-800/80 bg-slate-900/60 flex items-center justify-between text-xs">
+          {selectedSourcesCount > 0 ? (
+            <div className="flex items-center gap-2 text-purple-300">
+              <FileText className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <span className="font-medium">
+                {selectedSourcesCount} document source{selectedSourcesCount > 1 ? "s" : ""} selected
+              </span>
+              {onClearSourcesSelection && (
+                <button
+                  type="button"
+                  onClick={onClearSourcesSelection}
+                  className="ml-2 text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                >
+                  ✕ Deselect all (Pure Web/AI)
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-emerald-400">
+              <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="font-medium">Live Web & AI Knowledge</span>
+              <span className="text-[11px] text-slate-500 hidden sm:inline">(No local files attached)</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-1.5 text-[11px]">
+            <span className={`w-2 h-2 rounded-full ${webSearch ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
+            <span className={webSearch ? "text-emerald-400 font-medium" : "text-slate-500"}>
+              {webSearch ? "Internet Search Enabled" : "Internet Search Disabled"}
+            </span>
+          </div>
+        </div>
+
         {showDirectUrl && (
-          <div className="px-3 pt-2 pb-1 border-b border-slate-800/80 flex items-center gap-2 animate-fade-in-up">
+          <div className="px-3 pt-1 pb-2 border-b border-slate-800/80 flex items-center gap-2 animate-fade-in-up">
             <Video className="w-4 h-4 text-red-400 shrink-0" />
             <input
               type="text"
@@ -104,7 +144,7 @@ export const ResearchPromptBar: React.FC<ResearchPromptBarProps> = ({
             placeholder={
               selectedSourcesCount > 0
                 ? `Ask across ${selectedSourcesCount} selected source(s)... (Enter to submit)`
-                : "Ask research question, compare sources, or calculate... (Enter to submit)"
+                : "Ask anything, get live web prices, research papers, or calculate... (Enter to submit)"
             }
             className="w-full bg-transparent border-none text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none resize-none leading-relaxed py-1"
           />
@@ -127,6 +167,23 @@ export const ResearchPromptBar: React.FC<ResearchPromptBarProps> = ({
               <Video className="w-3.5 h-3.5 text-red-400" />
               <span className="text-[11px] hidden sm:inline">Add URL</span>
             </button>
+
+            {/* Web Search Quick Toggle Button */}
+            {onToggleWebSearch && (
+              <button
+                type="button"
+                onClick={onToggleWebSearch}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all border flex items-center gap-1.5 ${
+                  webSearch
+                    ? "bg-emerald-950/50 text-emerald-300 border-emerald-500/40 shadow-sm"
+                    : "bg-slate-900/60 text-slate-500 border-slate-800 hover:text-slate-300"
+                }`}
+                title={webSearch ? "Internet Search is ON: Click to disable" : "Internet Search is OFF: Click to enable"}
+              >
+                <Globe className={`w-3.5 h-3.5 ${webSearch ? "text-emerald-400" : "text-slate-500"}`} />
+                <span className="text-[11px]">{webSearch ? "Web Search: ON" : "Web Search: OFF"}</span>
+              </button>
+            )}
           </div>
 
           {/* Right Action: Mode Switcher + Analyze Button */}

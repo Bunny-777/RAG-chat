@@ -108,3 +108,34 @@ def test_session_api_endpoints():
     # 5. Verify deleted
     get_res_404 = client.get(f"/sessions/{sess_id}")
     assert get_res_404.status_code == 404
+
+
+def test_empty_source_ids_does_not_attach_indexed_documents():
+    async def _run():
+        from backend.app.services.source_store import source_store
+        from backend.app.models.responses import SourceInfo
+
+        # Simulate an existing indexed PDF in the store
+        mock_doc = SourceInfo(
+            source_id="doc_old_pdf_123",
+            source_type="document",
+            title="old_contract.pdf",
+            chunk_count=5,
+        )
+        source_store._source_infos["doc_old_pdf_123"] = mock_doc
+
+        fake_llm = FakeListChatModel(responses=["iPhone 16 base model starts at $799."])
+
+        with patch("backend.app.services.youtube_rag_service.youtube_rag_service.get_llm", return_value=fake_llm):
+            req = ResearchRequest(
+                query="price of new iphone",
+                source_ids=[],  # Explicitly empty: no documents selected
+                options=ResearchOptions(mode="quick", web_search=True),
+            )
+            res = await research_service.execute_research(req)
+            # Verify the old PDF was NOT attached to sources
+            source_ids_used = [s.source_id for s in res.sources]
+            assert "doc_old_pdf_123" not in source_ids_used
+
+    asyncio.run(_run())
+
