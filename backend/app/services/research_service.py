@@ -18,6 +18,11 @@ from backend.app.services.source_store import source_store, AnyIndexResult
 from backend.app.services.session_store import session_store
 from backend.app.tools.calculator import safe_calculate, extract_math_expression
 from backend.app.tools.web_search import web_search
+from backend.app.tools.datetime_tool import get_current_datetime_info
+from backend.app.tools.code_interpreter import execute_python_code
+from backend.app.tools.wikipedia_tool import search_wikipedia_encyclopedia
+from backend.app.tools.url_reader import read_url_content
+from backend.app.tools.classifier import classify_request
 
 logger = get_logger(__name__)
 
@@ -236,10 +241,25 @@ class ResearchService:
 
         sources_used: List[SourceInfo] = []
         target_indices: List[AnyIndexResult] = []
+        tool_contexts: List[str] = []
 
-        # 1. Direct Mathematical Calculation Tool request (ALWAYS tool-first, no LLM required)
-        math_expr = extract_math_expression(request.query)
-        if math_expr:
+        # 1. Intelligent Request Classification
+        has_attachments = bool(request.source_ids or request.youtube_url)
+        classification = classify_request(
+            query=request.query,
+            source_ids=request.source_ids,
+            youtube_url=request.youtube_url,
+            web_search_forced=bool(request.options and request.options.web_search),
+            has_attachments=has_attachments,
+        )
+        tools = classification.get("tools", [])
+        primary_intent = classification.get("primary_intent", "direct_llm")
+        extracted = classification.get("extracted", {})
+        logger.info(f"Request classification: intent={primary_intent}, tools={tools}, confidence={classification.get('confidence')}")
+
+        # 2. Standalone Mathematical Calculation (Deterministic, no LLM hallucination)
+        math_expr = extracted.get("math_expression") or extract_math_expression(request.query)
+        if math_expr and ("calculator" in tools or primary_intent == "calculator"):
             calc_result = safe_calculate(math_expr)
             if calc_result.get("success"):
                 logger.info(f"Executing deterministic Calculator Tool for expression: '{math_expr}' -> {calc_result['result']}")
@@ -269,26 +289,132 @@ class ResearchService:
                     sources=[],
                     mode="quick",
                     latency_ms=elapsed_ms,
+                    classification=classification,
                 )
                 source_store.save_research(response)
                 session_store.add_turn(session_id=session_id, query=request.query, report=response)
                 return response
+            elif "calculator" in tools:
+                # Add calculation attempt to tool context if part of broader query
+                tool_contexts.append(f"[Source: Calculator Tool]\nAttempted expression: {math_expr}\nResult: {calc_result.get('formatted', '')}")
 
-        # 2. Check if direct YouTube URL was provided in the request
-        if request.youtube_url:
-            logger.info(f"Direct YouTube URL provided: {request.youtube_url}")
-            index_res = youtube_rag_service.ingest_and_index_video(
-                url=request.youtube_url,
-                manual_transcript=request.manual_transcript,
-            )
-            source_store.add_youtube_source(index_res)
-            target_indices.append(index_res)
+        # 3. Auto-detect and ingest YouTube URLs (from prompt or explicit parameter)
+        yt_urls = extracted.get("youtube_urls", [])
+        active_yt_url = request.youtube_url or (yt_urls[0] if yt_urls else None)
+        if active_yt_url:
+            logger.info(f"Ingesting YouTube URL: {active_yt_url}")
+            try:
+                index_res = youtube_rag_service.ingest_and_index_video(
+                    url=active_yt_url,
+                    manual_transcript=request.manual_transcript,
+                )
+                source_store.add_youtube_source(index_res)
+                target_indices.append(index_res)
+            except Exception as yt_exc:
+                logger.warning(f"Error auto-ingesting YouTube URL {active_yt_url}: {yt_exc}")
 
-        # 3. Handle source_ids strictly:
-        # If user explicitly passed an empty list [], do NOT load any old uploaded documents.
-        # If user passed specific IDs, load only those IDs.
-        # If source_ids is None and no direct YouTube URL is given, only fallback to indexed sources
-        # if web search is not explicitly forced.
+        # 4. Direct URL Reader Tool (if user pasted direct web links)
+        if "url_reader" in tools and extracted.get("direct_urls"):
+            for durl in extracted["direct_urls"][:2]:
+                try:
+                    logger.info(f"Fetching direct URL content: {durl}")
+                    page_data = read_url_content(durl)
+                    if page_data.get("success"):
+                        content_snip = page_data.get("content", "")[:3000]
+                        tool_contexts.append(
+                            f"[Source: Direct Web Link - {page_data.get('title', 'Webpage')} ({durl})]\n"
+                            f"URL: {durl}\n"
+                            f"Content: {content_snip}"
+                        )
+                        sources_used.append(
+                            SourceInfo(
+                                source_id=f"url_{uuid.uuid4().hex[:6]}",
+                                source_type="web",
+                                url=durl,
+                                title=page_data.get("title") or "Web Page",
+                                metadata={"snippet": content_snip[:200]},
+                            )
+                        )
+                except Exception as url_exc:
+                    logger.warning(f"Failed to read direct URL {durl}: {url_exc}")
+
+        # 5. Real-Time Date and Time Tool
+        if "datetime" in tools:
+            try:
+                dt_info = get_current_datetime_info()
+                logger.info(f"Gathered real-time datetime: {dt_info['human']}")
+                tool_contexts.append(
+                    f"[Source: System Real-Time Clock]\n"
+                    f"Current Date & Time: {dt_info['human']}\n"
+                    f"ISO Format: {dt_info['local_iso']}\n"
+                    f"UTC Timestamp: {dt_info['utc_iso']}\n"
+                    f"Timezone: {dt_info['timezone']}"
+                )
+                sources_used.append(
+                    SourceInfo(
+                        source_id="tool_datetime",
+                        source_type="tool",
+                        title="System Real-Time Clock",
+                        metadata={"info": dt_info["human"], "tool": "datetime"},
+                    )
+                )
+            except Exception as dt_exc:
+                logger.warning(f"Error getting datetime info: {dt_exc}")
+
+        # 6. Python Code Interpreter Tool (Sandboxed execution)
+        if "code_interpreter" in tools:
+            code_to_exec = extracted.get("code_snippet")
+            if not code_to_exec:
+                code_match = re.search(r"```(?:python)?\s*(.*?)\s*```", request.query, re.DOTALL)
+                if code_match:
+                    code_to_exec = code_match.group(1).strip()
+            if code_to_exec:
+                try:
+                    logger.info(f"Executing sandboxed Python snippet: {code_to_exec[:80]}...")
+                    exec_res = execute_python_code(code_to_exec)
+                    out_text = exec_res.get("output", "") or "(No printed output)"
+                    status_str = "Success" if exec_res.get("success") else f"Failed ({exec_res.get('error')})"
+                    tool_contexts.append(
+                        f"[Source: Python Code Sandbox Execution]\n"
+                        f"Execution Status: {status_str}\n"
+                        f"Code:\n```python\n{code_to_exec}\n```\n"
+                        f"Output:\n```\n{out_text}\n```"
+                    )
+                    sources_used.append(
+                        SourceInfo(
+                            source_id="tool_python",
+                            source_type="tool",
+                            title="Python Sandbox Execution",
+                            metadata={"code": code_to_exec[:120], "output": out_text[:200]},
+                        )
+                    )
+                except Exception as py_exc:
+                    logger.warning(f"Error in code interpreter tool: {py_exc}")
+
+        # 7. Wikipedia Encyclopedia Search Tool
+        if "wikipedia" in tools:
+            try:
+                wiki_res = search_wikipedia_encyclopedia(request.query)
+                if wiki_res.get("found"):
+                    logger.info(f"Wikipedia entry found: {wiki_res['title']}")
+                    tool_contexts.append(
+                        f"[Source: Wikipedia Encyclopedia - {wiki_res['title']}]\n"
+                        f"Article URL: {wiki_res.get('url')}\n"
+                        f"Summary: {wiki_res.get('extract')}"
+                    )
+                    sources_used.append(
+                        SourceInfo(
+                            source_id=f"wiki_{uuid.uuid4().hex[:6]}",
+                            source_type="wikipedia",
+                            url=wiki_res.get("url"),
+                            title=f"Wikipedia: {wiki_res['title']}",
+                            metadata={"snippet": wiki_res.get("extract", "")[:200]},
+                        )
+                    )
+            except Exception as wiki_exc:
+                logger.warning(f"Error executing Wikipedia tool: {wiki_exc}")
+
+        # 8. Handle document source_ids strictly
         if request.source_ids is not None:
             for sid in request.source_ids:
                 idx = source_store.get_source_index(sid)
@@ -296,14 +422,14 @@ class ResearchService:
                     target_indices.append(idx)
                 else:
                     logger.warning(f"Source ID '{sid}' not found in store.")
-        elif not request.youtube_url and not (request.options and request.options.web_search):
+        elif not active_yt_url and not (request.options and request.options.web_search):
             all_sources = source_store.list_sources()
             for s in all_sources:
                 idx = source_store.get_source_index(s.source_id)
                 if idx:
                     target_indices.append(idx)
 
-        # 4. Retrieve Multi-Source Context across active target indices
+        # 9. Retrieve Multi-Source RAG Context across target indices
         rag_context = ""
         if target_indices:
             rag_context, chunks_collected = self._retrieve_multi_source_context(
@@ -311,25 +437,15 @@ class ResearchService:
                 indices=target_indices,
                 mode=mode,
             )
-            # Strictly add ONLY sources whose chunks were actually matched and retrieved!
             used_sids = {c["source_id"] for c in chunks_collected}
             for sid in used_sids:
                 info = source_store.get_source_info(sid)
                 if info and info not in sources_used:
                     sources_used.append(info)
 
-        # 5. Determine whether Web Search Tool should run:
-        # Runs if explicitly enabled (options.web_search=True) OR if the query is an open real-world/pricing/academic question without document indices
-        should_web_search = bool(request.options and request.options.web_search)
-        if not should_web_search and not target_indices and not request.youtube_url:
-            query_lower = request.query.lower()
-            intent_keywords = [
-                "search internet", "search web", "google", "online", "search the web",
-                "price of", "cost of", "how much is", "how much does", "specs of",
-                "latest", "release date", "research paper", "paper", "arxiv",
-            ]
-            if any(k in query_lower for k in intent_keywords):
-                should_web_search = True
+        # 10. Web & Academic Paper Search Tool
+        # Runs if: explicitly requested OR classified as "web_search"
+        should_web_search = bool(request.options and request.options.web_search) or ("web_search" in tools)
 
         web_search_results = []
         web_context = ""
@@ -366,10 +482,12 @@ class ResearchService:
                     )
                 web_context = "\n\n".join(snippets)
 
-        # Combine conversational memory, RAG context, and Web context
+        # 11. Combine Conversational Memory, Tool Contexts, RAG Context, and Web Search Context
         history_context = session_store.format_history_for_prompt(session_id)
 
         combined_context_parts = []
+        if tool_contexts:
+            combined_context_parts.append("\n\n".join(tool_contexts))
         if rag_context:
             combined_context_parts.append(rag_context)
         if web_context:
@@ -381,11 +499,11 @@ class ResearchService:
         if history_context:
             context_parts.append(history_context)
         if combined_context.strip():
-            context_parts.append(f"Context Sources:\n{combined_context}")
+            context_parts.append(f"Verified Evidence & Sources:\n{combined_context}")
 
         context_section = "\n\n---\n\n".join(context_parts) if context_parts else "No external source context provided. Rely on foundational knowledge."
 
-        # 7. Select Prompt and Temperature according to Mode
+        # 12. Select Prompt and Temperature according to Mode
         if mode == "quick":
             selected_prompt = QUICK_PROMPT
             temperature = 0.1
@@ -399,7 +517,7 @@ class ResearchService:
             temperature = 0.2
             default_conclusion = "Multi-source research synthesis completed with cited evidence."
 
-        # 8. Execute LLM with model fallback
+        # 13. Execute LLM with model fallback
         raw_answer = None
         last_err = None
         for model_cand in FALLBACK_MODELS:
@@ -423,7 +541,7 @@ class ResearchService:
         if not raw_answer:
             raise ModelProviderError(f"All attempted Groq models failed: {last_err}")
 
-        # 9. Parse structured findings level-wise
+        # 14. Parse structured findings level-wise
         executive_summary, findings, analysis_points, conclusion = parse_report_sections(
             raw_answer=raw_answer,
             default_conclusion=default_conclusion,
@@ -444,6 +562,7 @@ class ResearchService:
             sources=sources_used,
             mode=mode,
             latency_ms=elapsed_ms,
+            classification=classification,
         )
 
         source_store.save_research(response)
@@ -454,7 +573,7 @@ class ResearchService:
     async def execute_research_stream(
         self, request: ResearchRequest
     ) -> AsyncGenerator[str, None]:
-        """Yields Server-Sent Events (SSE) tracking research mode, progressive thinking steps, and final report."""
+        """Yields Server-Sent Events (SSE) tracking request classification, active tools, progressive thinking steps, and final report."""
         session_id = request.session_id or f"sess_{uuid.uuid4().hex[:10]}"
         request.session_id = session_id
         mode = request.options.mode if request.options and request.options.mode else "standard"
@@ -468,33 +587,46 @@ class ResearchService:
             yield f"data: {json.dumps({'type': 'status', 'message': '📚 Standard Mode: Initializing multi-source investigation...', 'session_id': session_id})}\n\n"
         await asyncio.sleep(0.04)
 
-        # Step 2: Tool Detection & Source Identification
-        math_expr = extract_math_expression(request.query)
-        if math_expr:
-            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'calculator', 'message': f'Evaluating mathematical calculation: {math_expr}'})}\n\n"
+        # Step 2: Query Classification & Tool Routing
+        has_attachments = bool(request.source_ids or request.youtube_url)
+        classification = classify_request(
+            query=request.query,
+            source_ids=request.source_ids,
+            youtube_url=request.youtube_url,
+            web_search_forced=bool(request.options and request.options.web_search),
+            has_attachments=has_attachments,
+        )
+        tools = classification.get("tools", [])
+        primary_intent = classification.get("primary_intent", "direct_llm")
+        reasoning = classification.get("reasoning", "")
 
-        has_explicit_docs = bool(request.source_ids or request.youtube_url)
-        has_fallback_docs = request.source_ids is None and bool(source_store.list_sources()) and not (request.options and request.options.web_search)
-        has_active_docs = has_explicit_docs or has_fallback_docs
+        intent_display = primary_intent.replace("_", " ").title()
+        yield f"data: {json.dumps({'type': 'status', 'message': f'🎯 Classified Intent: {intent_display} ({reasoning})', 'session_id': session_id})}\n\n"
+        await asyncio.sleep(0.03)
 
-        should_search_web = bool(request.options and request.options.web_search) or not has_active_docs
-        if should_search_web:
-            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'web_search', 'message': f'Searching live web and academic sources for: {request.query[:50]}...'})}\n\n"
+        # Step 3: Announce classified tools
+        tool_descriptions = {
+            "calculator": "Evaluating mathematical calculation deterministically",
+            "datetime": "Accessing system real-time clock & calendar",
+            "code_interpreter": "Preparing sandboxed Python code execution environment",
+            "wikipedia": "Querying Wikipedia encyclopedic knowledge base",
+            "url_reader": "Extracting web page content from direct URL link",
+            "youtube": "Transcribing and indexing YouTube video audio",
+            "web_search": "Querying live web & academic search indexes",
+            "rag_search": "Retrieving context across attached document indices",
+        }
 
-        if has_active_docs:
-            count = len(request.source_ids) if request.source_ids is not None else len(source_store.list_sources())
-            yield f"data: {json.dumps({'type': 'tool_call', 'tool': 'multi_rag', 'message': f'Querying vector indices across {count or 1} selected document source(s)...'})}\n\n"
+        for tool_name in tools:
+            desc = tool_descriptions.get(tool_name, f"Executing tool: {tool_name}")
+            yield f"data: {json.dumps({'type': 'tool_call', 'tool': tool_name, 'message': desc})}\n\n"
+            await asyncio.sleep(0.02)
 
-        await asyncio.sleep(0.04)
-
-        # Step 3: Deep Mode Progressive Thinking Traces
+        # Step 4: Deep Mode Progressive Thinking Traces
         if mode == "deep":
-            yield f"data: {json.dumps({'type': 'thinking', 'thought': 'Deconstructing research query and identifying core dimensions for comparative analysis...'})}\n\n"
-            await asyncio.sleep(0.06)
+            yield f"data: {json.dumps({'type': 'thinking', 'thought': 'Deconstructing research query and identifying core analytical dimensions...'})}\n\n"
+            await asyncio.sleep(0.05)
             yield f"data: {json.dumps({'type': 'thinking', 'thought': 'Cross-referencing evidence across sources and identifying consensus vs divergent claims...'})}\n\n"
-            await asyncio.sleep(0.06)
-            yield f"data: {json.dumps({'type': 'thinking', 'thought': 'Evaluating underlying assumptions, trade-offs, and evidentiary boundaries...'})}\n\n"
-            await asyncio.sleep(0.06)
+            await asyncio.sleep(0.05)
             yield f"data: {json.dumps({'type': 'thinking', 'thought': 'Synthesizing comparative matrix and formulating strategic conclusions...'})}\n\n"
             await asyncio.sleep(0.04)
 
@@ -503,16 +635,16 @@ class ResearchService:
             for src in report.sources:
                 yield f"data: {json.dumps({'type': 'source_found', 'source_id': src.source_id, 'url': src.url, 'title': src.title})}\n\n"
 
-            # Step 4: Analysis Step
+            # Step 5: Analysis Step
             if mode == "quick":
-                yield f"data: {json.dumps({'type': 'analysis', 'message': 'Finalizing quick flash response...'})}\n\n"
+                yield f"data: {json.dumps({'type': 'analysis', 'message': 'Finalizing quick response...'})}\n\n"
             elif mode == "deep":
                 yield f"data: {json.dumps({'type': 'analysis', 'message': 'Structuring comprehensive comparative report & findings...'})}\n\n"
             else:
                 yield f"data: {json.dumps({'type': 'analysis', 'message': 'Synthesizing evidence and cross-source citations...'})}\n\n"
             await asyncio.sleep(0.04)
 
-            # Step 5: Final Report Data & Done Event with session_id
+            # Step 6: Final Report Data & Done Event with session_id
             yield f"data: {json.dumps({'type': 'report', 'data': report.model_dump(), 'session_id': session_id})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'research_id': report.research_id, 'session_id': session_id})}\n\n"
         except Exception as exc:
@@ -520,3 +652,4 @@ class ResearchService:
 
 
 research_service = ResearchService()
+

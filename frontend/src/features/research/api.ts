@@ -75,13 +75,15 @@ export const researchApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  uploadFile: (file: File, options: { chunk_size: number; chunk_overlap: number; k: number }) => {
+  uploadFile: async (file: File, options?: { chunk_size?: number; chunk_overlap?: number; k?: number }) => {
     const form = new FormData();
     form.append("file", file);
-    form.append("chunk_size", String(options.chunk_size));
-    form.append("chunk_overlap", String(options.chunk_overlap));
-    form.append("k", String(options.k));
-    return request<SourceInfo>("/upload/file", { method: "POST", body: form });
+    if (options?.chunk_size) form.append("chunk_size", String(options.chunk_size));
+    if (options?.chunk_overlap) form.append("chunk_overlap", String(options.chunk_overlap));
+    if (options?.k) form.append("k", String(options.k));
+    const res = await request<{ message: string; source: SourceInfo } | SourceInfo>("/upload/file", { method: "POST", body: form });
+    if (res && "source" in res && res.source) return res.source;
+    return res as SourceInfo;
   },
 };
 

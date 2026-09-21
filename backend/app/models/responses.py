@@ -41,6 +41,7 @@ class ResearchResponse(BaseModel):
     sources: List[SourceInfo] = Field(default_factory=list)
     mode: str = "standard"
     latency_ms: Optional[float] = None
+    classification: Optional[Dict[str, Any]] = None
 
 
 class ChatSessionSummaryResponse(BaseModel):

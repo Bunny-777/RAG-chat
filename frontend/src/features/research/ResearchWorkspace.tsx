@@ -1,5 +1,6 @@
 import {
   Activity,
+  BookOpen,
   BrainCircuit,
   Calculator,
   Check,
@@ -19,14 +20,13 @@ import {
   MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
+  Paperclip,
   Plus,
   RefreshCw,
-  Search,
   Send,
-  Settings2,
   Sparkles,
+  Terminal,
   Trash2,
-  UploadCloud,
   X,
   Youtube,
 } from "lucide-react";
@@ -50,12 +50,9 @@ import type {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   AlertDialog,
@@ -69,13 +66,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const sourceId = (source: SourceInfo) => source.source_id || source.id || "";
 const sessionId = (session: ChatSessionSummary) => session.session_id || session.id || "";
 const sourceTitle = (source: CitedSource) => source.title || String(source.metadata?.["name"] || "Untitled source");
 
-function relativeDate(value?: string) {
+function relativeDate(value?: string | number) {
   if (!value) return "Recently";
-  const date = new Date(value);
+  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
   return Number.isNaN(date.getTime()) ? "Recently" : formatDistanceToNow(date, { addSuffix: true });
 }
 
@@ -182,11 +178,18 @@ function Logo() {
   );
 }
 
-function AppHeader({ health, sourceCount, activeSession, onMenu }: {
+function AppHeader({
+  health,
+  sessionCount,
+  activeSession,
+  onMenu,
+  onNewChat,
+}: {
   health: HealthInfo | null;
-  sourceCount: number;
+  sessionCount: number;
   activeSession?: string;
   onMenu: () => void;
+  onNewChat: () => void;
 }) {
   const online = health?.status === "ok";
   return (
@@ -198,187 +201,251 @@ function AppHeader({ health, sourceCount, activeSession, onMenu }: {
         <Logo />
         <div className="min-w-0">
           <h1 className="truncate font-display text-sm font-semibold text-foreground sm:text-base">AI Research Analyst</h1>
-          <p className="hidden text-xs text-muted-foreground sm:block">Multi-source intelligence workspace</p>
+          <p className="hidden text-xs text-muted-foreground sm:block">Intelligent multi-tool research & reasoning</p>
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" className="hidden sm:flex gap-1.5 text-xs" onClick={onNewChat}>
+          <Plus className="size-3.5" />
+          <span>New Chat</span>
+        </Button>
         <div className="hidden items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 lg:flex">
           <span className={cn("size-1.5 rounded-full", online ? "animate-pulse bg-signal" : "bg-destructive")} />
           <span className="text-xs font-medium">{online ? health?.llm_model || "Model online" : "Service offline"}</span>
           {health?.embedding_model && <span className="border-l border-border pl-2 text-xs text-muted-foreground">{health.embedding_model}</span>}
         </div>
         <Badge variant="outline" className="hidden gap-1.5 border-border bg-surface text-muted-foreground sm:flex">
-          <Database className="size-3" /> {sourceCount} sources
+          <History className="size-3" /> {sessionCount} chats
         </Badge>
         <Badge variant="outline" className="max-w-32 gap-1.5 border-border bg-surface text-muted-foreground">
-          <Activity className="size-3" /><span className="truncate">{activeSession ? activeSession.slice(0, 8) : "No session"}</span>
+          <Activity className="size-3" /><span className="truncate">{activeSession ? activeSession.slice(0, 8) : "Active"}</span>
         </Badge>
       </div>
     </header>
   );
 }
 
-function RagSettings({ chunkSize, setChunkSize, overlap, setOverlap, topK, setTopK }: {
-  chunkSize: number; setChunkSize: (n: number) => void;
-  overlap: number; setOverlap: (n: number) => void;
-  topK: number; setTopK: (n: number) => void;
-}) {
-  const settings: Array<[string, number, number, number, number, (value: number) => void]> = [
-    ["Chunk size", chunkSize, 200, 2000, 50, setChunkSize],
-    ["Overlap", overlap, 0, 500, 10, setOverlap],
-    ["Top-K", topK, 1, 20, 1, setTopK],
-  ];
-  return (
-    <Collapsible>
-      <CollapsibleTrigger className="group flex w-full items-center justify-between py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
-        <span className="flex items-center gap-2"><Settings2 className="size-3.5" />Advanced chunking</span>
-        <ChevronDown className="size-3.5 transition-transform group-data-[state=open]:rotate-180" />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-4 pb-1 pt-2">
-        {settings.map(([label, value, min, max, step, setter]) => (
-          <div className="space-y-2" key={String(label)}>
-            <div className="flex justify-between text-xs"><span className="text-muted-foreground">{label}</span><span className="font-mono text-foreground">{value}</span></div>
-            <Slider value={[value]} min={min} max={max} step={step} onValueChange={([next]) => { if (next !== undefined) setter(next); }} />
-          </div>
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-function SourcesPanel({ sources, selected, onToggle, onRefresh, onRemove }: {
-  sources: SourceInfo[];
-  selected: string[];
-  onToggle: (id: string) => void;
-  onRefresh: () => void;
-  onRemove: (source: SourceInfo) => void;
-}) {
-  const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [transcript, setTranscript] = useState("");
-  const [chunkSize, setChunkSize] = useState(800);
-  const [overlap, setOverlap] = useState(120);
-  const [topK, setTopK] = useState(5);
-  const [uploading, setUploading] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
-
-  const ingestYoutube = async () => {
-    if (!youtubeUrl.trim()) return;
-    setUploading(true);
-    try {
-      await researchApi.uploadYouTube({ url: youtubeUrl.trim(), ...(transcript.trim() ? { manual_transcript: transcript.trim() } : {}), chunk_size: chunkSize, chunk_overlap: overlap, k: topK });
-      setYoutubeUrl(""); setTranscript(""); onRefresh(); toast.success("YouTube source indexed");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Upload failed"); }
-    finally { setUploading(false); }
-  };
-  const uploadFiles = async (files: FileList | File[]) => {
-    const valid = Array.from(files).filter((file) => /\.(pdf|docx|txt|md)$/i.test(file.name));
-    if (!valid.length) { toast.error("Choose a PDF, DOCX, TXT, or Markdown file"); return; }
-    setUploading(true);
-    try {
-      for (const file of valid) await researchApi.uploadFile(file, { chunk_size: chunkSize, chunk_overlap: overlap, k: topK });
-      onRefresh(); toast.success(`${valid.length} document${valid.length > 1 ? "s" : ""} indexed`);
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Upload failed"); }
-    finally { setUploading(false); }
-  };
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="space-y-4 border-b border-border p-4">
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground"><Youtube className="size-3.5 text-youtube" />YouTube importer</label>
-          <div className="flex gap-2">
-            <Input value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} placeholder="Paste video URL" className="h-9 bg-background" />
-            <Button size="icon" variant="secondary" disabled={!youtubeUrl.trim() || uploading} onClick={ingestYoutube} aria-label="Import YouTube video">
-              {uploading ? <LoaderCircle className="animate-spin" /> : <Plus />}
-            </Button>
-          </div>
-          <Textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} placeholder="Optional transcript override" className="min-h-16 resize-none bg-background text-xs" />
-        </div>
-        <button type="button" onClick={() => fileInput.current?.click()} onDragOver={(e) => {e.preventDefault(); setDragging(true);}} onDragLeave={() => setDragging(false)} onDrop={(e) => {e.preventDefault(); setDragging(false); void uploadFiles(e.dataTransfer.files);}} className={cn("group flex w-full flex-col items-center justify-center rounded-md border border-dashed border-border bg-background/60 px-3 py-5 text-center transition-all hover:border-primary/50 hover:bg-primary/5", dragging && "border-primary bg-primary/10")}>
-          <UploadCloud className="mb-2 size-5 text-muted-foreground group-hover:text-primary" />
-          <span className="text-xs font-medium">Drop documents or browse</span>
-          <span className="mt-1 text-[11px] text-muted-foreground">PDF · DOCX · TXT · MD</span>
-        </button>
-        <input ref={fileInput} type="file" multiple accept=".pdf,.docx,.txt,.md" className="hidden" onChange={(e) => e.target.files && void uploadFiles(e.target.files)} />
-        <RagSettings chunkSize={chunkSize} setChunkSize={setChunkSize} overlap={overlap} setOverlap={setOverlap} topK={topK} setTopK={setTopK} />
-      </div>
-      <div className="flex items-center justify-between px-4 pb-2 pt-4">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Knowledge base</p>
-        <span className="text-[11px] text-muted-foreground">{selected.length}/{sources.length} active</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-        {sources.length === 0 ? (
-          <div className="mx-2 mt-3 rounded-md border border-border/70 bg-background/40 p-4 text-center"><Database className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">No indexed sources yet</p></div>
-        ) : sources.map((source) => {
-          const id = sourceId(source); const isVideo = source.source_type?.toLowerCase().includes("youtube") || source.url?.includes("youtu");
-          return <div key={id} className="group flex items-start gap-2 rounded-md px-2 py-2.5 hover:bg-accent/60">
-            <Checkbox checked={selected.includes(id)} onCheckedChange={() => onToggle(id)} aria-label={`Select ${sourceTitle(source)}`} className="mt-1" />
-            <div className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-secondary">{isVideo ? <Youtube className="size-3.5 text-youtube" /> : <FileText className="size-3.5 text-cyan" />}</div>
-            <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{sourceTitle(source)}</p><p className="mt-1 text-[11px] text-muted-foreground">{source.chunk_count ?? source.chunks ?? 0} chunks</p></div>
-            <div className="flex opacity-0 transition-opacity group-hover:opacity-100">
-              {source.url && <Button asChild variant="ghost" size="icon" className="size-7"><a href={source.url} target="_blank" rel="noreferrer" aria-label="Open source"><ExternalLink className="size-3" /></a></Button>}
-              <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive" onClick={() => onRemove(source)} aria-label="Delete source"><Trash2 className="size-3" /></Button>
-            </div>
-          </div>;
-        })}
-      </div>
-    </div>
-  );
-}
-
-function SessionsPanel({ sessions, activeId, onCreate, onSelect, onRemove }: {
-  sessions: ChatSessionSummary[]; activeId?: string;
-  onCreate: () => void; onSelect: (id: string) => void; onRemove: (session: ChatSessionSummary) => void;
-}) {
-  return <div className="flex h-full flex-col">
-    <div className="border-b border-border p-4"><Button className="w-full" variant="secondary" onClick={onCreate}><MessageSquarePlus />New research chat</Button></div>
-    <div className="flex items-center justify-between px-4 pb-2 pt-4"><p className="text-xs font-semibold uppercase text-muted-foreground">Recent threads</p><span className="text-[11px] text-muted-foreground">{sessions.length}</span></div>
-    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-      {sessions.length === 0 ? <div className="mx-2 mt-3 rounded-md border border-border/70 bg-background/40 p-4 text-center"><History className="mx-auto mb-2 size-5 text-muted-foreground" /><p className="text-xs text-muted-foreground">No previous sessions</p></div> : sessions.map((session) => {
-        const id = sessionId(session); const active = activeId === id;
-        return <div key={id} className={cn("group mb-1 flex items-start gap-2 rounded-md border border-transparent px-3 py-3 hover:bg-accent/60", active && "border-primary/20 bg-primary/10")}>
-          <button className="min-w-0 flex-1 text-left" onClick={() => onSelect(id)}><p className="truncate text-xs font-medium">{session.title || "Untitled research"}</p><div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground"><span>{relativeDate(session.updated_at || session.created_at)}</span><span>·</span><span>{session.message_count ?? session.turn_count ?? 0} messages</span></div></button>
-          <Button variant="ghost" size="icon" className="size-7 opacity-0 group-hover:opacity-100" onClick={() => onRemove(session)} aria-label="Delete session"><Trash2 className="size-3 text-muted-foreground" /></Button>
-        </div>;
-      })}
-    </div>
-  </div>;
-}
-
 function WorkspaceSidebar(props: {
-  open: boolean; onClose: () => void; sources: SourceInfo[]; selected: string[]; sessions: ChatSessionSummary[]; activeSession?: string;
-  onToggleSource: (id: string) => void; onRefreshSources: () => void; onRemoveSource: (source: SourceInfo) => void;
-  onCreateSession: () => void; onSelectSession: (id: string) => void; onRemoveSession: (session: ChatSessionSummary) => void;
+  open: boolean;
+  onClose: () => void;
+  sessions: ChatSessionSummary[];
+  activeSession?: string;
+  onCreateSession: () => void;
+  onSelectSession: (id: string) => void;
+  onRemoveSession: (session: ChatSessionSummary) => void;
 }) {
-  return <aside className={cn("fixed inset-y-0 left-0 z-50 flex w-[310px] flex-col border-r border-border bg-sidebar shadow-2xl transition-transform md:static md:z-20 md:shadow-none", !props.open && "-translate-x-full md:w-0")}>
-    <div className="flex h-16 shrink-0 items-center justify-between border-b border-border px-4"><div className="flex items-center gap-2"><Logo /><span className="text-sm font-semibold md:hidden">Research Analyst</span></div><Button size="icon" variant="ghost" onClick={props.onClose} aria-label="Close sidebar"><PanelLeftClose /></Button></div>
-    <Tabs defaultValue="sources" className="flex min-h-0 flex-1 flex-col">
-      <TabsList className="mx-3 mt-3 grid h-9 grid-cols-2 bg-background"><TabsTrigger value="sources" className="text-xs"><Database className="size-3.5" />Sources</TabsTrigger><TabsTrigger value="sessions" className="text-xs"><History className="size-3.5" />History</TabsTrigger></TabsList>
-      <TabsContent value="sources" className="mt-1 min-h-0 flex-1"><SourcesPanel sources={props.sources} selected={props.selected} onToggle={props.onToggleSource} onRefresh={props.onRefreshSources} onRemove={props.onRemoveSource} /></TabsContent>
-      <TabsContent value="sessions" className="mt-1 min-h-0 flex-1"><SessionsPanel sessions={props.sessions} {...(props.activeSession ? { activeId: props.activeSession } : {})} onCreate={props.onCreateSession} onSelect={props.onSelectSession} onRemove={props.onRemoveSession} /></TabsContent>
-    </Tabs>
-  </aside>;
+  return (
+    <aside
+      className={cn(
+        "fixed inset-y-0 left-0 z-50 flex w-[280px] flex-col border-r border-border bg-sidebar shadow-2xl transition-transform md:static md:z-20 md:shadow-none",
+        !props.open && "-translate-x-full md:w-0 md:overflow-hidden"
+      )}
+    >
+      {/* Header */}
+      <div className="flex h-16 shrink-0 items-center justify-between border-b border-border px-4">
+        <div className="flex items-center gap-2">
+          <Logo />
+          <span className="text-sm font-semibold">Research Chats</span>
+        </div>
+        <Button size="icon" variant="ghost" onClick={props.onClose} aria-label="Close sidebar">
+          <PanelLeftClose className="size-4" />
+        </Button>
+      </div>
+
+      {/* New Chat Button */}
+      <div className="p-3 border-b border-border/60">
+        <Button
+          className="w-full justify-start gap-2 text-xs font-medium shadow-sm"
+          variant="secondary"
+          onClick={props.onCreateSession}
+        >
+          <Plus className="size-4 text-primary" />
+          <span>New Chat</span>
+        </Button>
+      </div>
+
+      {/* Session Threads Header */}
+      <div className="flex items-center justify-between px-4 pb-2 pt-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Recent Threads</p>
+        <span className="text-[10px] text-muted-foreground">{props.sessions.length}</span>
+      </div>
+
+      {/* Sessions List */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 space-y-1">
+        {props.sessions.length === 0 ? (
+          <div className="mx-2 mt-6 rounded-lg border border-border/60 bg-background/40 p-5 text-center">
+            <History className="mx-auto mb-2 size-6 text-muted-foreground/60" />
+            <p className="text-xs text-muted-foreground font-medium">No previous chats yet</p>
+            <p className="mt-1 text-[11px] text-muted-foreground/60">Start a research query to create a thread</p>
+          </div>
+        ) : (
+          props.sessions.map((session) => {
+            const id = sessionId(session);
+            const active = props.activeSession === id;
+            return (
+              <div
+                key={id}
+                className={cn(
+                  "group flex items-center justify-between gap-1.5 rounded-lg border border-transparent px-3 py-2.5 transition-colors hover:bg-accent/60",
+                  active && "border-primary/20 bg-primary/10 font-medium"
+                )}
+              >
+                <button
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => props.onSelectSession(id)}
+                >
+                  <p className="truncate text-xs text-foreground">
+                    {session.title || "Untitled research"}
+                  </p>
+                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <span>{relativeDate(session.updated_at || session.created_at)}</span>
+                    <span>·</span>
+                    <span>{session.turn_count ?? session.message_count ?? 0} msgs</span>
+                  </div>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                  onClick={() => props.onRemoveSession(session)}
+                  aria-label="Delete session"
+                >
+                  <Trash2 className="size-3.5 text-muted-foreground" />
+                </Button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </aside>
+  );
 }
 
 function ToolIcon({ tool }: { tool?: string | undefined }) {
-  if (tool === "web_search") return <Globe2 className="size-4 text-cyan" />;
-  if (tool === "calculator") return <Calculator className="size-4 text-amber" />;
+  const t = (tool || "").toLowerCase();
+  if (t === "web_search" || t === "google") return <Globe2 className="size-4 text-cyan" />;
+  if (t === "calculator" || t === "math") return <Calculator className="size-4 text-amber" />;
+  if (t === "code_interpreter" || t === "code") return <Terminal className="size-4 text-emerald-400" />;
+  if (t === "datetime" || t === "clock") return <Clock3 className="size-4 text-blue-400" />;
+  if (t === "wikipedia") return <BookOpen className="size-4 text-purple-400" />;
+  if (t === "youtube") return <Youtube className="size-4 text-youtube" />;
+  if (t === "url_reader") return <Link2 className="size-4 text-teal-400" />;
+  if (t === "rag_search" || t === "document") return <FileText className="size-4 text-violet" />;
   return <Database className="size-4 text-violet" />;
 }
 
 function LiveProgress({ turn }: { turn: TimelineTurn }) {
   const thinking = turn.events.filter((event) => event.type === "thinking");
-  const visible = turn.events.filter((event) => event.type !== "thinking" && event.type !== "report" && event.type !== "done");
-  const found = turn.events.filter((event) => event.type === "source_found").map((event) => event.source).filter(Boolean) as CitedSource[];
-  return <div className="overflow-hidden rounded-lg border border-border bg-card shadow-panel">
-    <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3"><div className="flex items-center gap-2.5"><div className="relative"><Sparkles className="size-4 text-primary" />{turn.status === "streaming" && <span className="absolute inset-0 animate-ping rounded-full border border-primary/50" />}</div><div><p className="text-sm font-medium">Research in progress</p><p className="text-[11px] text-muted-foreground">Live execution trace</p></div></div><Badge variant="outline" className={cn("gap-1.5 border-border text-[10px] uppercase", turn.status === "streaming" && "border-amber/30 bg-amber/10 text-amber")}><span className={cn("size-1.5 rounded-full", turn.status === "streaming" ? "animate-pulse bg-amber" : "bg-muted-foreground")} />{turn.status}</Badge></div>
-    <div className="space-y-1 p-3">{visible.length === 0 && <div className="flex items-center gap-3 rounded-md px-2 py-3 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin text-primary" />Initializing query execution…</div>}
-      {visible.map((event, index) => <div key={index} className="flex items-start gap-3 rounded-md px-2 py-2.5 hover:bg-accent/40"><div className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md border border-border bg-background">{event.type === "tool_call" ? <ToolIcon tool={event.tool || event.name} /> : event.type === "source_found" ? <Link2 className="size-4 text-signal" /> : <LoaderCircle className={cn("size-4 text-primary", turn.status === "streaming" && "animate-spin")} />}</div><div className="min-w-0"><p className="text-xs font-medium">{event.message || event.content || (event.type === "source_found" ? `Found ${sourceTitle(event.source || {})}` : "Synthesizing evidence")}</p><p className="mt-1 text-[11px] uppercase text-muted-foreground">{event.tool?.replace("_", " ") || event.type.replace("_", " ")}</p></div></div>)}
+  const visible = turn.events.filter(
+    (event) => event.type !== "thinking" && event.type !== "report" && event.type !== "done"
+  );
+  const found = turn.events
+    .filter((event) => event.type === "source_found")
+    .map((event) => event.source)
+    .filter(Boolean) as CitedSource[];
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-panel">
+      <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <div className="relative">
+            <Sparkles className="size-4 text-primary" />
+            {turn.status === "streaming" && (
+              <span className="absolute inset-0 animate-ping rounded-full border border-primary/50" />
+            )}
+          </div>
+          <div>
+            <p className="text-sm font-medium">Research in progress</p>
+            <p className="text-[11px] text-muted-foreground">Live tool & reasoning trace</p>
+          </div>
+        </div>
+        <Badge
+          variant="outline"
+          className={cn(
+            "gap-1.5 border-border text-[10px] uppercase",
+            turn.status === "streaming" && "border-amber/30 bg-amber/10 text-amber"
+          )}
+        >
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              turn.status === "streaming" ? "animate-pulse bg-amber" : "bg-muted-foreground"
+            )}
+          />
+          {turn.status}
+        </Badge>
+      </div>
+
+      <div className="space-y-1 p-3">
+        {visible.length === 0 && (
+          <div className="flex items-center gap-3 rounded-md px-2 py-3 text-sm text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin text-primary" />
+            Initializing query routing and intelligence…
+          </div>
+        )}
+        {visible.map((event, index) => (
+          <div key={index} className="flex items-start gap-3 rounded-md px-2 py-2.5 hover:bg-accent/40">
+            <div className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md border border-border bg-background">
+              {event.type === "tool_call" ? (
+                <ToolIcon tool={event.tool || event.name} />
+              ) : event.type === "source_found" ? (
+                <Link2 className="size-4 text-signal" />
+              ) : (
+                <LoaderCircle
+                  className={cn("size-4 text-primary", turn.status === "streaming" && "animate-spin")}
+                />
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium">
+                {event.message ||
+                  event.content ||
+                  (event.type === "source_found"
+                    ? `Found ${sourceTitle(event.source || {})}`
+                    : "Synthesizing evidence")}
+              </p>
+              <p className="mt-1 text-[11px] uppercase text-muted-foreground">
+                {event.tool?.replace("_", " ") || event.type.replace("_", " ")}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {thinking.length > 0 && (
+        <Collapsible className="border-t border-border">
+          <CollapsibleTrigger className="group flex w-full items-center justify-between px-4 py-3 text-xs text-muted-foreground hover:bg-accent/30 hover:text-foreground">
+            <span className="flex items-center gap-2">
+              <BrainCircuit className="size-3.5" />
+              Reasoning process · {thinking.length} steps
+            </span>
+            <ChevronDown className="size-3.5 transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-2 px-4 pb-4">
+            {thinking.map((event, index) => (
+              <div
+                key={index}
+                className="border-l border-primary/30 pl-3 text-xs leading-relaxed text-muted-foreground"
+              >
+                {event.message || event.content || event.thought}
+              </div>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
+      {found.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto border-t border-border px-4 py-3">
+          {found.map((source, index) => (
+            <Badge key={source.url || index} variant="secondary" className="shrink-0 gap-1.5">
+              <Globe2 className="size-3" />
+              {source.domain || sourceTitle(source)}
+            </Badge>
+          ))}
+        </div>
+      )}
     </div>
-    {thinking.length > 0 && <Collapsible className="border-t border-border"><CollapsibleTrigger className="group flex w-full items-center justify-between px-4 py-3 text-xs text-muted-foreground hover:bg-accent/30 hover:text-foreground"><span className="flex items-center gap-2"><BrainCircuit className="size-3.5" />Reasoning process · {thinking.length} steps</span><ChevronDown className="size-3.5 transition-transform group-data-[state=open]:rotate-180" /></CollapsibleTrigger><CollapsibleContent className="space-y-2 px-4 pb-4">{thinking.map((event, index) => <div key={index} className="border-l border-primary/30 pl-3 text-xs leading-relaxed text-muted-foreground">{event.message || event.content}</div>)}</CollapsibleContent></Collapsible>}
-    {found.length > 0 && <div className="flex gap-2 overflow-x-auto border-t border-border px-4 py-3">{found.map((source, index) => <Badge key={source.url || index} variant="secondary" className="shrink-0 gap-1.5"><Globe2 className="size-3" />{source.domain || sourceTitle(source)}</Badge>)}</div>}
-  </div>;
+  );
 }
 
 function sourceKind(source: CitedSource) {
@@ -386,6 +453,7 @@ function sourceKind(source: CitedSource) {
   if (type.includes("youtube")) return "YouTube";
   if (type.includes("document") || type.includes("file")) return "Document";
   if (type.includes("academic") || source.url?.includes("arxiv")) return "Academic Paper";
+  if (type.includes("wikipedia")) return "Wikipedia";
   if (type.includes("google")) return "Google Search";
   return "Web";
 }
@@ -436,6 +504,19 @@ function reportMarkdown(report: ResearchReport) {
   return parts.join("\n\n");
 }
 
+function TooltipButton({ label, icon, onClick }: { label: string; icon: React.ReactNode; onClick: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="outline" size="icon" onClick={onClick} aria-label={label}>
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRegenerate: () => void }) {
   const [copied, setCopied] = useState(false);
 
@@ -447,28 +528,33 @@ function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRege
   };
 
   const exportReport = () => {
-    const blob = new Blob([reportMarkdown(report)], { type: "text/markdown" });
+    const blob = new Blob([reportMarkdown(report)], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${report.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "research-report"}.md`;
-    anchor.click();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(report.title || "research-report").toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
+    a.click();
     URL.revokeObjectURL(url);
-    toast.success("Markdown report exported");
+    toast.success("Report downloaded");
   };
 
   const hasExecutiveSummary = Boolean(report.executive_summary?.trim());
-  const validFindings = (report.key_findings || []).filter(
-    (f) => Boolean(f.finding?.trim() || f.detail?.trim() || f.title?.trim())
+  const validFindings = useMemo(
+    () => (report.key_findings || []).filter((item) => item.finding?.trim() || item.detail?.trim()),
+    [report.key_findings]
   );
-  const validAnalysis = (report.analysis || []).filter(
-    (a) => Boolean(a.content?.trim() || a.body?.trim())
+  const validAnalysis = useMemo(
+    () => (report.analysis || []).filter((item) => item.content?.trim() || item.body?.trim()),
+    [report.analysis]
   );
   const hasConclusion = Boolean(report.conclusion?.trim());
-  const hasSources = Boolean(report.sources && report.sources.length > 0);
+  const hasSources = Boolean(report.sources?.length);
 
-  // If there are no specialized sections, render cleanly and directly like Claude
-  const isDirectAnswerOnly = !validFindings.length && !validAnalysis.length && !hasConclusion;
+  const isDirectAnswerOnly =
+    hasExecutiveSummary &&
+    validFindings.length === 0 &&
+    validAnalysis.length === 0 &&
+    !hasConclusion;
 
   return (
     <article className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-panel">
@@ -480,10 +566,12 @@ function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRege
               <Badge className="bg-primary/15 text-primary text-[11px] hover:bg-primary/15">
                 {modeLabel(report.mode)} research
               </Badge>
-              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                <Clock3 className="size-3" />
-                {report.latency_ms.toLocaleString()} ms
-              </span>
+              {typeof report.latency_ms === "number" && (
+                <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Clock3 className="size-3" />
+                  {report.latency_ms.toLocaleString()} ms
+                </span>
+              )}
               {report.session_id && (
                 <span className="font-mono text-[10px] text-muted-foreground">
                   {report.session_id.slice(0, 8)}
@@ -588,7 +676,7 @@ function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRege
         )}
       </div>
 
-      {/* Cited Sources Shelf - Renders ONLY if sources exist */}
+      {/* Cited Sources Shelf */}
       {hasSources && (
         <div className="border-t border-border/70 bg-surface/40 px-5 py-4 sm:px-6">
           <div className="mb-3 flex items-center justify-between">
@@ -606,7 +694,7 @@ function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRege
                 className="group flex w-56 shrink-0 items-center gap-2.5 rounded-lg border border-border/70 bg-background/80 p-2.5 transition-colors hover:border-primary/40 hover:bg-accent/40"
               >
                 <div className="grid size-7 shrink-0 place-items-center rounded-md bg-secondary text-cyan">
-                  <Globe2 className="size-3.5" />
+                  <ToolIcon tool={source.source_type} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-medium text-foreground group-hover:text-primary">
@@ -626,78 +714,627 @@ function ReportViewer({ report, onRegenerate }: { report: ResearchReport; onRege
   );
 }
 
-function TooltipButton({ label, icon, onClick }: { label: string; icon: React.ReactNode; onClick: () => void }) { return <Tooltip><TooltipTrigger asChild><Button variant="outline" size="icon" onClick={onClick} aria-label={label}>{icon}</Button></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>; }
-
-function Conversation({ turns, onRegenerate, onExample }: { turns: TimelineTurn[]; onRegenerate: (turn: TimelineTurn) => void; onExample: (text: string) => void }) {
-  if (!turns.length) return <div className="flex min-h-full items-center justify-center px-5 pb-48 pt-16"><div className="max-w-2xl text-center"><div className="mx-auto mb-6 grid size-14 place-items-center rounded-lg border border-primary/25 bg-primary/10 shadow-glow"><Sparkles className="size-6 text-primary" /></div><p className="mb-2 font-mono text-[10px] uppercase text-primary">Research workspace ready</p><h2 className="font-display text-2xl font-semibold sm:text-3xl">What should we investigate?</h2><p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-muted-foreground">Synthesize uploaded knowledge with live web intelligence into a structured, cited research dossier.</p><div className="mt-7 grid gap-2 text-left sm:grid-cols-3">{["Compare the latest agentic AI frameworks", "Summarize key themes across my sources", "Build a market landscape with citations"].map((text) => <button key={text} onClick={() => onExample(text)} className="rounded-md border border-border bg-surface p-3 text-xs leading-relaxed text-muted-foreground transition-all hover:border-primary/40 hover:text-foreground">{text}</button>)}</div></div></div>;
-  return <div className="mx-auto w-full max-w-4xl space-y-8 px-4 pb-52 pt-8 sm:px-6">{turns.map((turn) => <div className="space-y-4" key={turn.id}><div className="ml-auto max-w-2xl"><div className="rounded-lg rounded-tr-sm border border-primary/20 bg-primary/10 px-4 py-3"><p className="text-sm leading-relaxed">{turn.query}</p></div><p className="mt-1.5 text-right text-[10px] text-muted-foreground">{new Date(turn.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p></div>{turn.report ? <ReportViewer report={turn.report} onRegenerate={() => onRegenerate(turn)} /> : <LiveProgress turn={turn} />}{turn.error && <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{turn.error}</p>}</div>)}</div>;
-}
-
-function PromptDock({ mode, setMode, webSearch, setWebSearch, selectedCount, query, setQuery, youtubeUrl, setYoutubeUrl, streaming, onSubmit, onCancel }: {
-  mode: ResearchMode; setMode: (mode: ResearchMode) => void; webSearch: boolean; setWebSearch: (value: boolean) => void; selectedCount: number;
-  query: string; setQuery: (query: string) => void; youtubeUrl: string; setYoutubeUrl: (url: string) => void; streaming: boolean; onSubmit: () => void; onCancel: () => void;
+function Conversation({
+  turns,
+  onRegenerate,
+  onExample,
+}: {
+  turns: TimelineTurn[];
+  onRegenerate: (turn: TimelineTurn) => void;
+  onExample: (text: string) => void;
 }) {
-  const [attachOpen, setAttachOpen] = useState(false);
-  const textarea = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (textarea.current) { textarea.current.style.height = "0px"; textarea.current.style.height = `${Math.min(textarea.current.scrollHeight, 160)}px`; } }, [query]);
-  return <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 md:left-[var(--workspace-offset,0px)]"><div className="prompt-fade mx-auto max-w-5xl px-3 pb-4 pt-12 sm:px-6 sm:pb-6"><div className="pointer-events-auto overflow-hidden rounded-xl border border-border bg-dock/95 shadow-dock backdrop-blur-xl">
-    {attachOpen && <div className="flex items-center gap-2 border-b border-border px-3 py-2"><Youtube className="size-4 shrink-0 text-youtube" /><Input value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} placeholder="Attach a YouTube URL to this query" className="h-8 border-0 bg-transparent shadow-none focus-visible:ring-0" /><Button variant="ghost" size="icon" className="size-7" onClick={() => {setAttachOpen(false); setYoutubeUrl("");}} aria-label="Remove YouTube attachment"><X className="size-3.5" /></Button></div>}
-    <div className="flex items-end gap-2 px-3 pt-3"><Textarea ref={textarea} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSubmit(); } }} placeholder="Ask a complex research question…" className="max-h-40 min-h-11 flex-1 resize-none border-0 bg-transparent px-1 py-2 text-sm shadow-none focus-visible:ring-0" /><Button size="icon" className={cn("mb-1 shrink-0", streaming && "bg-destructive text-destructive-foreground hover:bg-destructive/90")} disabled={!streaming && !query.trim()} onClick={streaming ? onCancel : onSubmit} aria-label={streaming ? "Stop research" : "Send research query"}>{streaming ? <CircleStop /> : <Send />}</Button></div>
-    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 px-3 py-2.5"><div className="flex flex-wrap items-center gap-2"><div className="flex rounded-md bg-background p-0.5">{(["quick", "standard", "deep"] as ResearchMode[]).map((item) => <button key={item} onClick={() => setMode(item)} className={cn("rounded-sm px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors", mode === item && "bg-secondary text-foreground shadow-sm")}>{modeLabel(item)}</button>)}</div><label className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground"><Globe2 className="size-3 text-cyan" /><span className="hidden sm:inline">Web</span><Switch checked={webSearch} onCheckedChange={setWebSearch} className="scale-75" /></label><Badge variant="outline" className="h-7 gap-1.5 border-border bg-background text-[11px] text-muted-foreground"><Database className="size-3" />{selectedCount} selected</Badge></div><Button variant="ghost" size="sm" className={cn("h-7 px-2 text-xs text-muted-foreground", attachOpen && "text-youtube")} onClick={() => setAttachOpen(!attachOpen)}><Youtube className="size-3.5" /><span className="hidden sm:inline">Attach video</span></Button></div>
-  </div><p className="pointer-events-auto mt-2 text-center text-[10px] text-muted-foreground">Enter to send · Shift+Enter for a new line</p></div></div>;
+  if (!turns.length) {
+    return (
+      <div className="flex min-h-full items-center justify-center px-5 pb-48 pt-16">
+        <div className="max-w-2xl text-center">
+          <div className="mx-auto mb-6 grid size-14 place-items-center rounded-xl border border-primary/25 bg-primary/10 shadow-glow">
+            <Sparkles className="size-6 text-primary" />
+          </div>
+          <p className="mb-2 font-mono text-[10px] uppercase text-primary tracking-wider">
+            AI Research Assistant Ready
+          </p>
+          <h2 className="font-display text-2xl font-semibold sm:text-3xl text-foreground">
+            What would you like to investigate?
+          </h2>
+          <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-muted-foreground">
+            Ask questions, upload documents (PDF/Word/TXT), paste YouTube or web links, or run math and Python logic in real-time.
+          </p>
+          <div className="mt-7 grid gap-2.5 text-left sm:grid-cols-3">
+            {[
+              "Compare the latest agentic AI frameworks with citations",
+              "What is today's date and time in UTC?",
+              "Calculate sqrt(144) * 25 + 18",
+            ].map((text) => (
+              <button
+                key={text}
+                onClick={() => onExample(text)}
+                className="rounded-lg border border-border bg-surface/80 p-3.5 text-xs leading-relaxed text-muted-foreground transition-all hover:border-primary/40 hover:bg-accent/40 hover:text-foreground"
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-4xl space-y-8 px-4 pb-52 pt-8 sm:px-6">
+      {turns.map((turn) => (
+        <div className="space-y-4" key={turn.id}>
+          <div className="ml-auto max-w-2xl">
+            <div className="rounded-lg rounded-tr-sm border border-primary/20 bg-primary/10 px-4 py-3">
+              <p className="text-sm leading-relaxed text-foreground">{turn.query}</p>
+            </div>
+            <p className="mt-1.5 text-right text-[10px] text-muted-foreground">
+              {new Date(turn.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </p>
+          </div>
+          {turn.report ? (
+            <ReportViewer report={turn.report} onRegenerate={() => onRegenerate(turn)} />
+          ) : (
+            <LiveProgress turn={turn} />
+          )}
+          {turn.error && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+              {turn.error}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
+
+function PromptDock({
+  mode,
+  setMode,
+  webSearch,
+  setWebSearch,
+  query,
+  setQuery,
+  youtubeUrl,
+  setYoutubeUrl,
+  attachedFiles,
+  onAttachFiles,
+  onRemoveAttachedFile,
+  streaming,
+  onSubmit,
+  onCancel,
+}: {
+  mode: ResearchMode;
+  setMode: (mode: ResearchMode) => void;
+  webSearch: boolean;
+  setWebSearch: (value: boolean) => void;
+  query: string;
+  setQuery: (query: string) => void;
+  youtubeUrl: string;
+  setYoutubeUrl: (url: string) => void;
+  attachedFiles: File[];
+  onAttachFiles: (files: File[]) => void;
+  onRemoveAttachedFile: (index: number) => void;
+  streaming: boolean;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const [attachUrlOpen, setAttachUrlOpen] = useState(false);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (textarea.current) {
+      textarea.current.style.height = "0px";
+      textarea.current.style.height = `${Math.min(textarea.current.scrollHeight, 160)}px`;
+    }
+  }, [query]);
+
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 md:left-[var(--workspace-offset,0px)]">
+      <div className="prompt-fade mx-auto max-w-5xl px-3 pb-4 pt-12 sm:px-6 sm:pb-6">
+        <div className="pointer-events-auto overflow-hidden rounded-xl border border-border bg-dock/95 shadow-dock backdrop-blur-xl">
+          {/* File Attachment Badges */}
+          {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 border-b border-border/60 bg-muted/20 px-3.5 py-2">
+              {attachedFiles.map((file, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-xs shadow-sm"
+                >
+                  <FileText className="size-3.5 text-primary" />
+                  <span className="max-w-[180px] truncate font-medium text-foreground">{file.name}</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    ({Math.round(file.size / 1024)} KB)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveAttachedFile(idx)}
+                    className="ml-1 text-muted-foreground hover:text-foreground"
+                    aria-label="Remove attachment"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* YouTube / Direct Link Input Header */}
+          {attachUrlOpen && (
+            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+              <Youtube className="size-4 shrink-0 text-youtube" />
+              <Input
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                placeholder="Attach YouTube link (or just paste directly in prompt)"
+                className="h-8 border-0 bg-transparent shadow-none focus-visible:ring-0 text-xs"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                onClick={() => {
+                  setAttachUrlOpen(false);
+                  setYoutubeUrl("");
+                }}
+                aria-label="Remove URL attachment"
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          )}
+
+          {/* Prompt Area with Paperclip & Send */}
+          <div className="flex items-end gap-2 px-3 pt-3">
+            {/* Hidden File Input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.txt,.md,.csv"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) {
+                  onAttachFiles(Array.from(e.target.files));
+                  e.target.value = "";
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="mb-1 size-8 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Attach file (PDF, DOCX, TXT, MD, CSV)"
+              title="Attach documents"
+            >
+              <Paperclip className="size-4" />
+            </Button>
+
+            <Textarea
+              ref={textarea}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  onSubmit();
+                }
+              }}
+              placeholder="Ask anything, attach files, or paste YouTube/web links…"
+              className="max-h-40 min-h-11 flex-1 resize-none border-0 bg-transparent px-1 py-2 text-sm shadow-none focus-visible:ring-0"
+            />
+
+            <Button
+              size="icon"
+              className={cn(
+                "mb-1 shrink-0",
+                streaming && "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              )}
+              disabled={!streaming && !query.trim() && attachedFiles.length === 0}
+              onClick={streaming ? onCancel : onSubmit}
+              aria-label={streaming ? "Stop research" : "Send research query"}
+            >
+              {streaming ? <CircleStop /> : <Send />}
+            </Button>
+          </div>
+
+          {/* Bottom Toolbar: Modes & Switches */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-md bg-background p-0.5 border border-border/60">
+                {(["quick", "standard", "deep"] as ResearchMode[]).map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => setMode(item)}
+                    className={cn(
+                      "rounded-sm px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors",
+                      mode === item && "bg-secondary text-foreground shadow-sm"
+                    )}
+                  >
+                    {modeLabel(item)}
+                  </button>
+                ))}
+              </div>
+
+              <label className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
+                <Globe2 className="size-3 text-cyan" />
+                <span className="hidden sm:inline">Web Search</span>
+                <Switch checked={webSearch} onCheckedChange={setWebSearch} className="scale-75" />
+              </label>
+
+              {attachedFiles.length > 0 && (
+                <Badge variant="outline" className="h-7 gap-1.5 border-border bg-background text-[11px] text-primary">
+                  <FileText className="size-3" />
+                  {attachedFiles.length} file{attachedFiles.length > 1 ? "s" : ""} attached
+                </Badge>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn("h-7 px-2 text-xs text-muted-foreground", attachUrlOpen && "text-youtube")}
+                onClick={() => setAttachUrlOpen(!attachUrlOpen)}
+              >
+                <Youtube className="size-3.5" />
+                <span className="hidden sm:inline">Attach Link</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+        <p className="pointer-events-auto mt-2 text-center text-[10px] text-muted-foreground">
+          Enter to send · Shift+Enter for a new line · Attach PDFs, DOCX, or paste YouTube URLs directly
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const LOCAL_STORAGE_SESSION_KEY = "rag_chat_active_session_id";
+const LOCAL_STORAGE_TURNS_PREFIX = "rag_chat_turns_";
 
 export function ResearchWorkspace() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [health, setHealth] = useState<HealthInfo | null>(null);
-  const [sources, setSources] = useState<SourceInfo[]>([]);
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
-  const [selectedSources, setSelectedSources] = useState<string[]>([]);
-  const [activeSession, setActiveSession] = useState<string>();
-  const [turns, setTurns] = useState<TimelineTurn[]>([]);
+  const [activeSession, setActiveSession] = useState<string | undefined>(() => {
+    return localStorage.getItem(LOCAL_STORAGE_SESSION_KEY) || undefined;
+  });
+  const [turns, setTurns] = useState<TimelineTurn[]>(() => {
+    const savedSession = localStorage.getItem(LOCAL_STORAGE_SESSION_KEY);
+    if (savedSession) {
+      const saved = localStorage.getItem(`${LOCAL_STORAGE_TURNS_PREFIX}${savedSession}`);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
   const [query, setQuery] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<ResearchMode>("standard");
   const [webSearch, setWebSearch] = useState(true);
-  const [deleteTarget, setDeleteTarget] = useState<{ kind: "source" | "session"; item: SourceInfo | ChatSessionSummary }>();
+  const [deleteTarget, setDeleteTarget] = useState<ChatSessionSummary | undefined>(undefined);
   const abortRef = useRef<AbortController | undefined>(undefined);
   const streaming = turns.some((turn) => turn.status === "streaming");
+
+  // Save activeSession and turns to localStorage
+  useEffect(() => {
+    if (activeSession) {
+      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, activeSession);
+      localStorage.setItem(`${LOCAL_STORAGE_TURNS_PREFIX}${activeSession}`, JSON.stringify(turns));
+    }
+  }, [activeSession, turns]);
 
   useEffect(() => {
     if (window.matchMedia("(max-width: 767px)").matches) setSidebarOpen(false);
   }, []);
-  const loadSources = useCallback(async () => { try { const data = await researchApi.sources(); setSources(data); setSelectedSources((current) => current.length ? current.filter((id) => data.some((item) => sourceId(item) === id)) : data.map(sourceId).filter(Boolean)); } catch { setSources([]); } }, []);
-  const loadSessions = useCallback(async () => { try { setSessions(await researchApi.sessions()); } catch { setSessions([]); } }, []);
-  useEffect(() => { void researchApi.health().then(setHealth).catch(() => setHealth(null)); void loadSources(); void loadSessions(); }, [loadSources, loadSessions]);
 
-  const createSession = async () => { try { const session = await researchApi.createSession(); const id = sessionId(session); setActiveSession(id || undefined); setTurns([]); await loadSessions(); toast.success("New research session created"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not create session"); } };
-  const selectSession = async (id: string) => {
-    try { const detail = await researchApi.session(id); setActiveSession(id); const history = detail.turns || detail.messages || []; setTurns(history.reduce<TimelineTurn[]>((acc, item, index) => { if (item.role === "user") acc.push({ id: item.id || `${id}-${index}`, query: item.query || item.content || "Research query", createdAt: item.created_at || item.timestamp || new Date().toISOString(), status: "complete", events: [] }); else { const last = acc.at(-1); if (last && item.report) last.report = item.report; else if (last && item.content) last.events.push({ type: "analysis", content: item.content }); } return acc; }, [])); setSidebarOpen(false); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not load session"); } };
-
-  const submit = useCallback(async (override?: string) => {
-    const text = (override || query).trim(); if (!text || streaming) return;
-    let currentSession = activeSession;
-    if (!currentSession) { try { const created = await researchApi.createSession(text.slice(0, 64)); currentSession = sessionId(created) || undefined; setActiveSession(currentSession); await loadSessions(); } catch { /* Backends may create a session during research. */ } }
-    const id = crypto.randomUUID(); const turn: TimelineTurn = { id, query: text, createdAt: new Date().toISOString(), status: "streaming", events: [] };
-    setTurns((current) => [...current, turn]); setQuery("");
-    const controller = new AbortController(); abortRef.current = controller;
-    const payload: ResearchPayload = { query: text, session_id: currentSession, source_ids: selectedSources, options: { mode, web_search: webSearch }, youtube_url: youtubeUrl.trim() || undefined };
+  const loadSessions = useCallback(async () => {
     try {
-      await streamResearch(payload, (event: ResearchStreamEvent) => setTurns((current) => current.map((item) => item.id === id ? { ...item, events: [...item.events, event], report: event.report || (event.type === "report" ? event.data as ResearchReport : undefined) || item.report, status: event.type === "done" ? "complete" : item.status } : item)), controller.signal);
-      setTurns((current) => current.map((item) => item.id === id ? { ...item, status: item.report ? "complete" : "complete" } : item)); setYoutubeUrl(""); void loadSessions();
+      const data = await researchApi.sessions();
+      setSessions(data);
+    } catch {
+      setSessions([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void researchApi.health().then(setHealth).catch(() => setHealth(null));
+    void loadSessions();
+  }, [loadSessions]);
+
+  const createSession = async () => {
+    try {
+      const session = await researchApi.createSession();
+      const id = sessionId(session);
+      setActiveSession(id || undefined);
+      setTurns([]);
+      await loadSessions();
+      toast.success("New research session created");
     } catch (error) {
-      const cancelled = error instanceof DOMException && error.name === "AbortError";
-      setTurns((current) => current.map((item) => item.id === id ? { ...item, status: cancelled ? "cancelled" : "error", error: cancelled ? undefined : error instanceof Error ? error.message : "Research failed" } : item));
-      if (!cancelled) toast.error(error instanceof Error ? error.message : "Research failed");
-    } finally { abortRef.current = undefined; }
-  }, [activeSession, loadSessions, mode, query, selectedSources, streaming, webSearch, youtubeUrl]);
+      toast.error(error instanceof Error ? error.message : "Could not create session");
+    }
+  };
 
-  const confirmDelete = async () => { if (!deleteTarget) return; try { if (deleteTarget.kind === "source") { const id = sourceId(deleteTarget.item as SourceInfo); await researchApi.removeSource(id); await loadSources(); toast.success("Source removed"); } else { const id = sessionId(deleteTarget.item as ChatSessionSummary); await researchApi.removeSession(id); if (activeSession === id) {setActiveSession(undefined); setTurns([]);} await loadSessions(); toast.success("Session deleted"); } } catch (error) { toast.error(error instanceof Error ? error.message : "Delete failed"); } finally { setDeleteTarget(undefined); } };
+  const selectSession = async (id: string) => {
+    try {
+      setActiveSession(id);
+      // First check local cache for immediate feedback
+      const local = localStorage.getItem(`${LOCAL_STORAGE_TURNS_PREFIX}${id}`);
+      if (local) {
+        try {
+          setTurns(JSON.parse(local));
+        } catch {
+          // ignore
+        }
+      }
+      const detail = await researchApi.session(id);
+      const history = detail.turns || detail.messages || [];
+      const remoteTurns = history.reduce<TimelineTurn[]>((acc, item, index) => {
+        if (item.role === "user") {
+          acc.push({
+            id: item.id || `${id}-${index}`,
+            query: item.query || item.content || "Research query",
+            createdAt: item.created_at || item.timestamp || new Date().toISOString(),
+            status: "complete",
+            events: [],
+          });
+        } else {
+          const last = acc.at(-1);
+          if (last && item.report) last.report = item.report;
+          else if (last && item.content) last.events.push({ type: "analysis", content: item.content });
+        }
+        return acc;
+      }, []);
+      setTurns(remoteTurns);
+      if (window.innerWidth < 768) setSidebarOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load session");
+    }
+  };
 
-  return <TooltipProvider delayDuration={300}><div className="flex h-svh overflow-hidden bg-background text-foreground" style={{ "--workspace-offset": sidebarOpen ? "310px" : "0px" } as React.CSSProperties}>
-    {sidebarOpen && <button className="fixed inset-0 z-40 bg-overlay md:hidden" onClick={() => setSidebarOpen(false)} aria-label="Close navigation overlay" />}
-    <WorkspaceSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} sources={sources} selected={selectedSources} sessions={sessions} {...(activeSession ? { activeSession } : {})} onToggleSource={(id) => setSelectedSources((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} onRefreshSources={() => void loadSources()} onRemoveSource={(item) => setDeleteTarget({ kind: "source", item })} onCreateSession={() => void createSession()} onSelectSession={(id) => void selectSession(id)} onRemoveSession={(item) => setDeleteTarget({ kind: "session", item })} />
-    <div className="relative flex min-w-0 flex-1 flex-col"><AppHeader health={health} sourceCount={sources.length} {...(activeSession ? { activeSession } : {})} onMenu={() => setSidebarOpen(true)} /><Button variant="outline" size="icon" className={cn("absolute left-3 top-20 z-20 hidden bg-background md:flex", sidebarOpen && "hidden")} onClick={() => setSidebarOpen(true)} aria-label="Open sidebar"><PanelLeftOpen /></Button><main className="min-h-0 flex-1 overflow-y-auto"><Conversation turns={turns} onRegenerate={(turn) => void submit(turn.query)} onExample={setQuery} /></main><PromptDock mode={mode} setMode={setMode} webSearch={webSearch} setWebSearch={setWebSearch} selectedCount={selectedSources.length} query={query} setQuery={setQuery} youtubeUrl={youtubeUrl} setYoutubeUrl={setYoutubeUrl} streaming={streaming} onSubmit={() => void submit()} onCancel={() => abortRef.current?.abort()} /></div>
-    <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(undefined)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete {deleteTarget?.kind}?</AlertDialogTitle><AlertDialogDescription>This permanently removes the {deleteTarget?.kind} and cannot be undone.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => void confirmDelete()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
-  </div></TooltipProvider>;
+  const handleAttachFiles = (files: File[]) => {
+    const valid = files.filter((file) => /\.(pdf|docx|txt|md|csv)$/i.test(file.name));
+    if (!valid.length) {
+      toast.error("Please select a PDF, Word DOCX, TXT, Markdown, or CSV file.");
+      return;
+    }
+    setAttachedFiles((prev) => [...prev, ...valid]);
+    toast.success(`Attached ${valid.length} document${valid.length > 1 ? "s" : ""}`);
+  };
+
+  const handleRemoveAttachedFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const submit = useCallback(
+    async (override?: string) => {
+      const text = (override || query).trim();
+      if ((!text && attachedFiles.length === 0) || streaming) return;
+
+      const finalText = text || "Please summarize and analyze the attached document(s).";
+
+      let currentSession = activeSession;
+      if (!currentSession) {
+        try {
+          const created = await researchApi.createSession(finalText.slice(0, 64));
+          currentSession = sessionId(created) || undefined;
+          setActiveSession(currentSession);
+          await loadSessions();
+        } catch {
+          /* Fallback */
+        }
+      }
+
+      // 1. Upload any attached files first
+      let uploadedSourceIds: string[] = [];
+      if (attachedFiles.length > 0) {
+        toast.info(`Indexing ${attachedFiles.length} attached document(s)...`);
+        for (const file of attachedFiles) {
+          try {
+            const src = await researchApi.uploadFile(file);
+            const sid = src.source_id || src.id;
+            if (sid) uploadedSourceIds.push(sid);
+          } catch (uploadErr) {
+            toast.error(`Failed to index file '${file.name}': ${uploadErr instanceof Error ? uploadErr.message : "Upload error"}`);
+          }
+        }
+        setAttachedFiles([]);
+      }
+
+      const id = crypto.randomUUID();
+      const turn: TimelineTurn = {
+        id,
+        query: finalText,
+        createdAt: new Date().toISOString(),
+        status: "streaming",
+        events: [],
+      };
+
+      setTurns((current) => [...current, turn]);
+      setQuery("");
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const payload: ResearchPayload = {
+        query: finalText,
+        session_id: currentSession,
+        source_ids: uploadedSourceIds.length > 0 ? uploadedSourceIds : undefined,
+        options: { mode, web_search: webSearch },
+        youtube_url: youtubeUrl.trim() || undefined,
+      };
+
+      try {
+        await streamResearch(
+          payload,
+          (event: ResearchStreamEvent) =>
+            setTurns((current) =>
+              current.map((item) =>
+                item.id === id
+                  ? {
+                      ...item,
+                      events: [...item.events, event],
+                      report:
+                        event.report ||
+                        (event.type === "report" ? (event.data as ResearchReport) : undefined) ||
+                        item.report,
+                      status: event.type === "done" ? "complete" : item.status,
+                    }
+                  : item
+              )
+            ),
+          controller.signal
+        );
+        setTurns((current) =>
+          current.map((item) => (item.id === id ? { ...item, status: "complete" } : item))
+        );
+        setYoutubeUrl("");
+        void loadSessions();
+      } catch (error) {
+        const cancelled = error instanceof DOMException && error.name === "AbortError";
+        setTurns((current) =>
+          current.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  status: cancelled ? "cancelled" : "error",
+                  error: cancelled ? undefined : error instanceof Error ? error.message : "Research failed",
+                }
+              : item
+          )
+        );
+        if (!cancelled) toast.error(error instanceof Error ? error.message : "Research failed");
+      } finally {
+        abortRef.current = undefined;
+      }
+    },
+    [activeSession, attachedFiles, loadSessions, mode, query, streaming, webSearch, youtubeUrl]
+  );
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      const id = sessionId(deleteTarget);
+      await researchApi.removeSession(id);
+      if (activeSession === id) {
+        setActiveSession(undefined);
+        setTurns([]);
+        localStorage.removeItem(LOCAL_STORAGE_SESSION_KEY);
+      }
+      await loadSessions();
+      toast.success("Session deleted");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Delete failed");
+    } finally {
+      setDeleteTarget(undefined);
+    }
+  };
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <div
+        className="flex h-svh overflow-hidden bg-background text-foreground"
+        style={{ "--workspace-offset": sidebarOpen ? "280px" : "0px" } as React.CSSProperties}
+      >
+        {sidebarOpen && (
+          <button
+            className="fixed inset-0 z-40 bg-overlay md:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close navigation overlay"
+          />
+        )}
+
+        {/* ChatGPT-style Unified History Sidebar */}
+        <WorkspaceSidebar
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          sessions={sessions}
+          {...(activeSession ? { activeSession } : {})}
+          onCreateSession={() => void createSession()}
+          onSelectSession={(id) => void selectSession(id)}
+          onRemoveSession={(session) => setDeleteTarget(session)}
+        />
+
+        {/* Main Workspace */}
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          <AppHeader
+            health={health}
+            sessionCount={sessions.length}
+            {...(activeSession ? { activeSession } : {})}
+            onMenu={() => setSidebarOpen(true)}
+            onNewChat={() => void createSession()}
+          />
+
+          <Button
+            variant="outline"
+            size="icon"
+            className={cn(
+              "absolute left-3 top-20 z-20 hidden bg-background md:flex",
+              sidebarOpen && "hidden"
+            )}
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open sidebar"
+          >
+            <PanelLeftOpen className="size-4" />
+          </Button>
+
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            <Conversation
+              turns={turns}
+              onRegenerate={(turn) => void submit(turn.query)}
+              onExample={setQuery}
+            />
+          </main>
+
+          <PromptDock
+            mode={mode}
+            setMode={setMode}
+            webSearch={webSearch}
+            setWebSearch={setWebSearch}
+            query={query}
+            setQuery={setQuery}
+            youtubeUrl={youtubeUrl}
+            setYoutubeUrl={setYoutubeUrl}
+            attachedFiles={attachedFiles}
+            onAttachFiles={handleAttachFiles}
+            onRemoveAttachedFile={handleRemoveAttachedFile}
+            streaming={streaming}
+            onSubmit={() => void submit()}
+            onCancel={() => abortRef.current?.abort()}
+          />
+        </div>
+
+        {/* Confirmation Dialog */}
+        <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(undefined)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete session?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently remove this research conversation and its history.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => void confirmDelete()}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </TooltipProvider>
+  );
 }
